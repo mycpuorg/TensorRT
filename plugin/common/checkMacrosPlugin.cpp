@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "checkMacrosPlugin.h"
+#include "common/checkMacrosPlugin.h"
 #include <cstdlib>
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
@@ -91,10 +92,26 @@ void throwCudnnError(const char* file, const char* function, int line, int statu
     throw error;
 }
 
+// break-pointable
+void throwPluginError(char const* file, char const* function, int line, int status, char const* msg)
+{
+    PluginError error(file, function, line, status, msg);
+    reportValidationFailure(msg, file, line);
+    throw error;
+}
+
 void logError(const char* msg, const char* file, const char* fn, int line)
 {
     gLogError << "Parameter check failed at: " << file << "::" << fn << "::" << line;
     gLogError << ", condition: " << msg << std::endl;
+}
+
+void reportValidationFailure(char const* msg, char const* file, int line)
+{
+    std::ostringstream stream;
+    stream << "Validation failed: " << msg << std::endl
+           << file << ':' << line << std::endl;
+    getLogger()->log(nvinfer1::ILogger::Severity::kINTERNAL_ERROR, stream.str().c_str());
 }
 
 // break-pointable
@@ -105,7 +122,7 @@ void reportAssertion(const char* msg, const char* file, int line)
            << file << ':' << line << std::endl
            << "Aborting..." << std::endl;
     getLogger()->log(nvinfer1::ILogger::Severity::kINTERNAL_ERROR, stream.str().c_str());
-    cudaDeviceReset();
+    PLUGIN_CUASSERT(cudaDeviceReset());
     abort();
 }
 

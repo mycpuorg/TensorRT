@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,6 +23,8 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <thread>
+
+#include "sampleUtils.h"
 
 namespace sample
 {
@@ -42,7 +45,7 @@ namespace
 
 void cudaSleep(void* sleep)
 {
-    std::this_thread::sleep_for(std::chrono::duration<int, std::milli>(*static_cast<int*>(sleep)));
+    std::this_thread::sleep_for(std::chrono::duration<float, std::milli>(*static_cast<float*>(sleep)));
 }
 
 } // namespace
@@ -84,7 +87,7 @@ public:
 
     void wait(TrtCudaEvent& event);
 
-    void sleep(int* ms)
+    void sleep(float* ms)
     {
         cudaCheck(cudaLaunchHostFunc(mStream, cudaSleep, ms));
     }
@@ -195,10 +198,24 @@ public:
 
     void endCaptureOnError(TrtCudaStream& stream)
     {
+        // There are two possibilities why stream capture would fail:
+        // (1) stream is in cudaErrorStreamCaptureInvalidated state.
+        // (2) TRT reports a failure.
+        // In case (1), the returning mGraph should be nullptr.
+        // In case (2), the returning mGraph is not nullptr, but it should not be used.
         const auto ret = cudaStreamEndCapture(stream.get(), &mGraph);
-        assert(ret == cudaErrorStreamCaptureInvalidated);
-        assert(mGraph == nullptr);
-        // Clean up the above CUDA error.
+        if (ret == cudaErrorStreamCaptureInvalidated)
+        {
+            assert(mGraph == nullptr);
+        }
+        else
+        {
+            assert(ret == cudaSuccess);
+            assert(mGraph != nullptr);
+            cudaCheck(cudaGraphDestroy(mGraph));
+            mGraph = nullptr;
+        }
+        // Clean up any CUDA error.
         cudaGetLastError();
         sample::gLogWarning << "The CUDA graph capture on the stream has failed." << std::endl;
     }
@@ -361,10 +378,15 @@ public:
     //!
     virtual size_t getSize() const = 0;
 
+    //!
+    //! Virtual destructor declaraion
+    //!
+    virtual ~IMirroredBuffer() = default;
+
 }; // class IMirroredBuffer
 
 //!
-//! Class to have a seperate memory buffer for discrete device and host allocations.
+//! Class to have a separate memory buffer for discrete device and host allocations.
 //!
 class DiscreteMirroredBuffer : public IMirroredBuffer
 {
@@ -449,6 +471,46 @@ private:
     TrtManagedBuffer mBuffer;
 }; // class UnifiedMirroredBuffer
 
+//!
+//! Class to allocate memory for outputs with data-dependent shapes. The sizes of those are unknown so pre-allocation is
+//! not possible.
+//!
+class OutputAllocator : public nvinfer1::IOutputAllocator
+{
+public:
+    OutputAllocator(IMirroredBuffer* buffer)
+        : mBuffer(buffer)
+    {
+    }
+
+    void* reallocateOutput(
+        char const* tensorName, void* currentMemory, uint64_t size, uint64_t alignment) noexcept override
+    {
+        // Some memory allocators return nullptr when allocating zero bytes, but TensorRT requires a non-null ptr
+        // even for empty tensors, so allocate a dummy byte.
+        size = std::max(size, static_cast<uint64_t>(1));
+        if (size > mSize)
+        {
+            mBuffer->allocate(roundUp(size, alignment));
+            mSize = size;
+        }
+        return mBuffer->getDeviceBuffer();
+    }
+
+    void notifyShape(char const* tensorName, nvinfer1::Dims const& dims) noexcept override {}
+
+    IMirroredBuffer* getBuffer()
+    {
+        return mBuffer.get();
+    }
+
+    virtual ~OutputAllocator() {}
+
+private:
+    std::unique_ptr<IMirroredBuffer> mBuffer;
+    uint64_t mSize{};
+};
+
 inline void setCudaDevice(int device, std::ostream& os)
 {
     cudaCheck(cudaSetDevice(device));
@@ -456,7 +518,7 @@ inline void setCudaDevice(int device, std::ostream& os)
     cudaDeviceProp properties;
     cudaCheck(cudaGetDeviceProperties(&properties, device));
 
-// clang-format off
+    // clang-format off
     os << "=== Device Information ===" << std::endl;
     os << "Selected Device: "      << properties.name                                               << std::endl;
     os << "Compute Capability: "   << properties.major << "." << properties.minor                   << std::endl;
@@ -468,6 +530,20 @@ inline void setCudaDevice(int device, std::ostream& os)
                         << " (ECC " << (properties.ECCEnabled != 0 ? "enabled" : "disabled") << ")" << std::endl;
     os << "Memory Clock Rate: "    << properties.memoryClockRate / 1000000.0F << " GHz"             << std::endl;
     // clang-format on
+}
+
+inline int32_t getCudaDriverVersion()
+{
+    int32_t version{-1};
+    cudaCheck(cudaDriverGetVersion(&version));
+    return version;
+}
+
+inline int32_t getCudaRuntimeVersion()
+{
+    int32_t version{-1};
+    cudaCheck(cudaRuntimeGetVersion(&version));
+    return version;
 }
 
 } // namespace sample

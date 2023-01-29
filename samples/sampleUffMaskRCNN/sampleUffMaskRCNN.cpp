@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -400,7 +401,6 @@ bool SampleMaskRCNN::constructNetwork(SampleUniquePtr<nvinfer1::IBuilder>& build
     SampleUniquePtr<IBuilderConfig> config{builder->createBuilderConfig()};
 
     builder->setMaxBatchSize(mParams.batchSize);
-    config->setMaxWorkspaceSize(1_GiB);
     if (mParams.fp16)
     {
         config->setFlag(BuilderFlag::kFP16);
@@ -608,6 +608,11 @@ bool SampleMaskRCNN::verifyOutput(const samplesCommon::BufferManager& buffers)
     for (int p = 0; p < mParams.batchSize; ++p)
     {
         std::vector<MaskRCNNUtils::BBoxInfo> binfo = decodeOutput(p, detectionsHost, masksHost);
+        if (binfo.size() == 0)
+        {
+            sample::gLogError << "No detections were found in the input image!" << std::endl;
+            pass = false;
+        }
         for (size_t roi_id = 0; roi_id < binfo.size(); roi_id++)
         {
             const auto resized_mask = MaskRCNNUtils::resizeMask(binfo[roi_id], mParams.maskThreshold); // mask threshold

@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,7 +17,7 @@
 
 from collections import OrderedDict
 
-from polygraphy import mod, util, config
+from polygraphy import config, mod, util
 from polygraphy.common.interface import TypedDict, TypedList
 from polygraphy.json import Decoder, Encoder, add_json_methods, load_json, save_json
 from polygraphy.logger import G_LOGGER
@@ -24,7 +25,7 @@ from polygraphy.logger import G_LOGGER
 np = mod.lazy_import("numpy")
 
 
-class LazyNumpyArray(object):
+class LazyNumpyArray:
     """
     Represents a lazily loaded NumPy array.
     For example, large NumPy arrays may be serialized to temporary files on the disk
@@ -41,9 +42,7 @@ class LazyNumpyArray(object):
         if config.ARRAY_SWAP_THRESHOLD_MB >= 0 and arr.nbytes > (config.ARRAY_SWAP_THRESHOLD_MB << 20):
             self.tmpfile = util.NamedTemporaryFile(suffix=".json")
             G_LOGGER.extra_verbose(
-                "Evicting large array ({:.3f} MiB) from memory and saving to {:}".format(
-                    arr.nbytes / (1024.0 ** 2), self.tmpfile.name
-                )
+                f"Evicting large array ({arr.nbytes / 1024.0 ** 2:.3f} MiB) from memory and saving to {self.tmpfile.name}"
             )
             save_json(arr, self.tmpfile.name)
         else:
@@ -111,22 +110,25 @@ class IterationResult(TypedDict(lambda: str, lambda: LazyNumpyArray)):
         Args:
             outputs (Dict[str, np.array]): The outputs of this iteration, mapped to their names.
 
-
-            runtime (float): The time required for this iteration, in seconds.
-            runner_name (str): The name of the runner that produced this output.
+            runtime (float):
+                    The time required for this iteration, in seconds.
+                    Only used for logging purposes.
+            runner_name (str):
+                    The name of the runner that produced this output.
+                    If this is omitted, a default name is generated.
         """
         if outputs and config.ARRAY_SWAP_THRESHOLD_MB < 0:
             total_size_gb = sum(arr.nbytes for arr in outputs.values() if isinstance(arr, np.ndarray)) / (1024.0 ** 3)
             if total_size_gb >= 1:
                 G_LOGGER.warning(
-                    "It looks like the outputs of this network are very large ({:.3f} GiB).\n"
-                    "To reduce memory usage, you may want to allow Polygraphy to swap these arrays to the disk using "
-                    "the POLYGRAPHY_ARRAY_SWAP_THRESHOLD_MB environment variable.".format(total_size_gb)
+                    f"It looks like the outputs of this network are very large ({total_size_gb:.3f} GiB).\n"
+                    "To reduce memory usage, you may want to allow Polygraphy to swap these arrays to the disk "
+                    "using the POLYGRAPHY_ARRAY_SWAP_THRESHOLD_MB environment variable."
                 )
 
         super().__init__(IterationResult._to_lazy_dict(outputs))
         self.runtime = runtime
-        self.runner_name = util.default(runner_name, "")
+        self.runner_name = util.default(runner_name, "custom_runner")
 
     # Convenience methods to preserve np.ndarray in the interface.
     def update(self, other):
@@ -178,7 +180,18 @@ def decode(dct):
 @add_json_methods("inference results")
 class RunResults(TypedList(lambda: tuple)):
     """
-    Maps runner names to zero or more IterationResults.
+    Maps runners to per-iteration outputs (in the form of a ``List[IterationResult]``).
+
+    For example, if ``results`` is an instance of ``RunResults()``, then
+    to access the outputs of the first iteration from a specified runner, do:
+    ::
+
+        iteration = 0
+        runner_name = "trt-runner"
+        outputs = results[runner_name][iteration]
+
+        # `outputs` is a `Dict[str, np.ndarray]`
+
 
     Note: Technically, this is a ``List[Tuple[str, List[IterationResult]]]``, but includes
     helpers that make it behave like an OrderedDict that can contain duplicates.
@@ -218,6 +231,35 @@ class RunResults(TypedList(lambda: tuple)):
             self.lst[name] = iteration_results
         return self
 
+    def add(self, out_list, runtime=None, runner_name=None):
+        """
+        A helper to create a ``List[IterationResult]`` and map it to the specified runner_name.
+
+        This method cannot be used to modify an existing entry.
+
+        Calling this method is equivalent to:
+        ::
+
+            results[runner_name] = []
+            for out in out_list:
+                results[runner_name].append(IterationResult(out, runtime, runner_name))
+
+        Args:
+            out_list (List[Dict[str, np.array]]):
+                One or more set of outputs where each output is a dictionary
+                of output names mapped to NumPy arrays.
+
+            runtime (float):
+                    The time required for this iteration, in seconds.
+                    Only used for logging purposes.
+            runner_name (str):
+                    The name of the runner that produced this output.
+                    If this is omitted, a default name is generated.
+        """
+        runner_name = util.default(runner_name, "custom_runner")
+        iter_results = [IterationResult(out, runtime, runner_name) for out in out_list]
+        self[runner_name] = iter_results
+
     def __getitem__(self, key):
         if isinstance(key, int):
             return self.lst[key]
@@ -227,9 +269,7 @@ class RunResults(TypedList(lambda: tuple)):
                 return iteration_results
 
         G_LOGGER.critical(
-            "{:35} does not exist in this RunResults instance. Note: Available runners: {:}".format(
-                key, list(self.keys())
-            )
+            f"{key:35} does not exist in this RunResults instance. Note: Available runners: {list(self.keys())}"
         )
 
     def __setitem__(self, key, value):

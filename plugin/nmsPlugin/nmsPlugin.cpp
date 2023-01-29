@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -94,7 +95,7 @@ DetectionOutput::DetectionOutput(const void* data, size_t length)
     mType = read<DataType>(d);
     // mScoreBits
     mScoreBits = read<int32_t>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 DetectionOutputDynamic::DetectionOutputDynamic(const void* data, size_t length)
@@ -113,7 +114,7 @@ DetectionOutputDynamic::DetectionOutputDynamic(const void* data, size_t length)
     mType = read<DataType>(d);
     // mScoreBits
     mScoreBits = read<int32_t>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 int DetectionOutput::getNbOutputs() const noexcept
@@ -145,8 +146,8 @@ void DetectionOutputDynamic::terminate() noexcept {}
 // Returns output dimensions at given index
 Dims DetectionOutput::getOutputDimensions(int index, const Dims* inputs, int nbInputDims) noexcept
 {
-    ASSERT(nbInputDims == 3);
-    ASSERT(index == 0 || index == 1);
+    PLUGIN_ASSERT(nbInputDims == 3);
+    PLUGIN_ASSERT(index == 0 || index == 1);
     // Output dimensions
     // index 0 : Dimensions 1x param.keepTopK x 7
     // index 1: Dimensions 1x1x1
@@ -160,14 +161,14 @@ Dims DetectionOutput::getOutputDimensions(int index, const Dims* inputs, int nbI
 DimsExprs DetectionOutputDynamic::getOutputDimensions(
     int outputIndex, const DimsExprs* inputs, int nbInputs, IExprBuilder& exprBuilder) noexcept
 {
-    ASSERT(nbInputs == 3);
-    ASSERT(outputIndex >= 0 && outputIndex < this->getNbOutputs());
+    PLUGIN_ASSERT(nbInputs == 3);
+    PLUGIN_ASSERT(outputIndex >= 0 && outputIndex < this->getNbOutputs());
     // loc data
-    ASSERT(inputs[0].nbDims == 4);
+    PLUGIN_ASSERT(inputs[0].nbDims == 4);
     // conf data
-    ASSERT(inputs[1].nbDims == 4);
+    PLUGIN_ASSERT(inputs[1].nbDims == 4);
     // prior data
-    ASSERT(inputs[2].nbDims == 4);
+    PLUGIN_ASSERT(inputs[2].nbDims == 4);
     const int C1_idx = param.inputOrder[0];
     const int C2_idx = param.inputOrder[1];
     if (inputs[C1_idx].d[0]->isConstant() && inputs[C1_idx].d[1]->isConstant() && inputs[C1_idx].d[2]->isConstant()
@@ -285,7 +286,7 @@ void DetectionOutput::serialize(void* buffer) const noexcept
     write(d, numPriors);
     write(d, mType);
     write(d, mScoreBits);
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 void DetectionOutputDynamic::serialize(void* buffer) const noexcept
@@ -297,7 +298,7 @@ void DetectionOutputDynamic::serialize(void* buffer) const noexcept
     write(d, numPriors);
     write(d, mType);
     write(d, mScoreBits);
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 // Check if the DataType and Plugin format is supported
@@ -310,7 +311,7 @@ bool DetectionOutputDynamic::supportsFormatCombination(
     int pos, const PluginTensorDesc* inOut, int nbInputs, int nbOutputs) noexcept
 {
     // 3 inputs, 2 outputs, so 5 input/output in total
-    ASSERT(0 <= pos && pos < 5);
+    PLUGIN_ASSERT(0 <= pos && pos < 5);
     const auto* in = inOut;
     const auto* out = inOut + nbInputs;
     const bool consistentFloatPrecision = (in[0].type == in[pos].type);
@@ -379,26 +380,42 @@ void DetectionOutputDynamic::setScoreBits(int32_t scoreBits) noexcept
 // Cloning the plugin
 IPluginV2Ext* DetectionOutput::clone() const noexcept
 {
-    // Create a new instance
-    auto* plugin = new DetectionOutput(param, C1, C2, numPriors);
-    plugin->mType = mType;
-    // Set the namespace
-    plugin->setPluginNamespace(mPluginNamespace.c_str());
-    // set mScoreBits
-    plugin->setScoreBits(mScoreBits);
-    return plugin;
+    try
+    {
+        // Create a new instance
+        auto* plugin = new DetectionOutput(param, C1, C2, numPriors);
+        plugin->mType = mType;
+        // Set the namespace
+        plugin->setPluginNamespace(mPluginNamespace.c_str());
+        // set mScoreBits
+        plugin->setScoreBits(mScoreBits);
+        return plugin;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 IPluginV2DynamicExt* DetectionOutputDynamic::clone() const noexcept
 {
-    // Create a new instance
-    auto* plugin = new DetectionOutputDynamic(param, C1, C2, numPriors);
-    plugin->mType = mType;
-    // Set the namespace
-    plugin->setPluginNamespace(mPluginNamespace.c_str());
-    // set mScoreBits
-    plugin->setScoreBits(mScoreBits);
-    return plugin;
+    try
+    {
+        // Create a new instance
+        auto* plugin = new DetectionOutputDynamic(param, C1, C2, numPriors);
+        plugin->mType = mType;
+        // Set the namespace
+        plugin->setPluginNamespace(mPluginNamespace.c_str());
+        // set mScoreBits
+        plugin->setScoreBits(mScoreBits);
+        return plugin;
+    }
+    catch (const std::exception& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 // Set plugin namespace
@@ -423,33 +440,35 @@ const char* DetectionOutputDynamic::getPluginNamespace() const noexcept
 }
 
 // Return the DataType of the plugin output at the requested index.
-DataType DetectionOutput::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
+DataType DetectionOutput::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const
+    noexcept
 {
     // Two outputs
-    ASSERT(index == 0 || index == 1);
-    ASSERT(inputTypes[0] == inputTypes[1] && inputTypes[2] == inputTypes[1]);
+    PLUGIN_ASSERT(index == 0 || index == 1);
+    PLUGIN_ASSERT(inputTypes[0] == inputTypes[1] && inputTypes[2] == inputTypes[1]);
     // topDetections
     if (index == 0)
     {
         return inputTypes[0];
     }
     // keepCount: use kFLOAT instead as they have same sizeof(type)
-    ASSERT(sizeof(int) == sizeof(float));
+    PLUGIN_ASSERT(sizeof(int) == sizeof(float));
     return DataType::kFLOAT;
 }
 
-DataType DetectionOutputDynamic::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
+DataType DetectionOutputDynamic::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const
+    noexcept
 {
     // Two outputs
-    ASSERT(index == 0 || index == 1);
-    ASSERT(inputTypes[0] == inputTypes[1] && inputTypes[2] == inputTypes[1]);
+    PLUGIN_ASSERT(index == 0 || index == 1);
+    PLUGIN_ASSERT(inputTypes[0] == inputTypes[1] && inputTypes[2] == inputTypes[1]);
     // topDetections
     if (index == 0)
     {
         return inputTypes[0];
     }
     // keepCount: use kFLOAT instead as they have same sizeof(type)
-    ASSERT(sizeof(int) == sizeof(float));
+    PLUGIN_ASSERT(sizeof(int) == sizeof(float));
     return DataType::kFLOAT;
 }
 
@@ -477,19 +496,19 @@ void DetectionOutput::configurePlugin(const Dims* inputDims, int nbInputs, const
     const DataType* inputTypes, const DataType* outputTypes, const bool* inputIsBroadcast,
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize) noexcept
 {
-    ASSERT(nbInputs == 3);
-    ASSERT(nbOutputs == 2);
+    PLUGIN_ASSERT(nbInputs == 3);
+    PLUGIN_ASSERT(nbOutputs == 2);
 
     // Verify all the input dimensions
     for (int i = 0; i < nbInputs; i++)
     {
-        ASSERT(inputDims[i].nbDims == 3);
+        PLUGIN_ASSERT(inputDims[i].nbDims == 3);
     }
 
     // Verify all the output dimensions
     for (int i = 0; i < nbOutputs; i++)
     {
-        ASSERT(outputDims[i].nbDims == 3);
+        PLUGIN_ASSERT(outputDims[i].nbDims == 3);
     }
 
     // Configure C1, C2 and numPriors
@@ -502,10 +521,10 @@ void DetectionOutput::configurePlugin(const Dims* inputDims, int nbInputs, const
     const int numLocClasses = param.shareLocation ? 1 : param.numClasses;
 
     // Verify C1
-    ASSERT(numPriors * numLocClasses * nbBoxCoordinates == inputDims[param.inputOrder[0]].d[0]);
+    PLUGIN_ASSERT(numPriors * numLocClasses * nbBoxCoordinates == inputDims[param.inputOrder[0]].d[0]);
 
     // Verify C2
-    ASSERT(numPriors * param.numClasses == inputDims[param.inputOrder[1]].d[0]);
+    PLUGIN_ASSERT(numPriors * param.numClasses == inputDims[param.inputOrder[1]].d[0]);
 
     // initialize mType
     mType = inputTypes[0];
@@ -514,19 +533,19 @@ void DetectionOutput::configurePlugin(const Dims* inputDims, int nbInputs, const
 void DetectionOutputDynamic::configurePlugin(
     const DynamicPluginTensorDesc* in, int nbInputs, const DynamicPluginTensorDesc* out, int nbOutputs) noexcept
 {
-    ASSERT(nbInputs == 3);
-    ASSERT(nbOutputs == 2);
+    PLUGIN_ASSERT(nbInputs == 3);
+    PLUGIN_ASSERT(nbOutputs == 2);
 
     // Verify all the input dimensions
     for (int i = 0; i < nbInputs; i++)
     {
-        ASSERT(in[i].desc.dims.nbDims == 4);
+        PLUGIN_ASSERT(in[i].desc.dims.nbDims == 4);
     }
 
     // Verify all the output dimensions
     for (int i = 0; i < nbOutputs; i++)
     {
-        ASSERT(out[i].desc.dims.nbDims == 4);
+        PLUGIN_ASSERT(out[i].desc.dims.nbDims == 4);
     }
 
     // Configure C1, C2 and numPriors
@@ -539,10 +558,10 @@ void DetectionOutputDynamic::configurePlugin(
     const int numLocClasses = param.shareLocation ? 1 : param.numClasses;
 
     // Verify C1
-    ASSERT(numPriors * numLocClasses * nbBoxCoordinates == in[param.inputOrder[0]].desc.dims.d[1]);
+    PLUGIN_ASSERT(numPriors * numLocClasses * nbBoxCoordinates == in[param.inputOrder[0]].desc.dims.d[1]);
 
     // Verify C2
-    ASSERT(numPriors * param.numClasses == in[param.inputOrder[1]].desc.dims.d[1]);
+    PLUGIN_ASSERT(numPriors * param.numClasses == in[param.inputOrder[1]].desc.dims.d[1]);
 
     // initialize mType
     mType = in[0].desc.type;
@@ -611,207 +630,241 @@ const PluginFieldCollection* NMSBasePluginCreator::getFieldNames() noexcept
 // Creates the NMS plugin
 IPluginV2Ext* NMSPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    const PluginField* fields = fc->fields;
-    // Default init values for TF SSD network
-    params.codeType = CodeTypeSSD::TF_CENTER;
-    params.inputOrder[0] = 0;
-    params.inputOrder[1] = 2;
-    params.inputOrder[2] = 1;
-    // scoreBits defaults to 16
-    mScoreBits = 16;
-
-    // Read configurations from  each fields
-    for (int i = 0; i < fc->nbFields; ++i)
+    try
     {
-        const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "shareLocation"))
+        const PluginField* fields = fc->fields;
+        // Default init values for TF SSD network
+        params.codeType = CodeTypeSSD::TF_CENTER;
+        params.inputOrder[0] = 0;
+        params.inputOrder[1] = 2;
+        params.inputOrder[2] = 1;
+        // scoreBits defaults to 16
+        mScoreBits = 16;
+
+        // Read configurations from  each fields
+        for (int i = 0; i < fc->nbFields; ++i)
         {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.shareLocation = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "varianceEncodedInTarget"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.varianceEncodedInTarget = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "backgroundLabelId"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.backgroundLabelId = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "numClasses"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.numClasses = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "topK"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.topK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "keepTopK"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.keepTopK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "confidenceThreshold"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            params.confidenceThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "nmsThreshold"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            params.nmsThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "confSigmoid"))
-        {
-            params.confSigmoid = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "isNormalized"))
-        {
-            params.isNormalized = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "inputOrder"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            const int size = fields[i].length;
-            const int* o = static_cast<const int*>(fields[i].data);
-            for (int j = 0; j < size; j++)
+            const char* attrName = fields[i].name;
+            if (!strcmp(attrName, "shareLocation"))
             {
-                params.inputOrder[j] = *o;
-                o++;
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.shareLocation = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "varianceEncodedInTarget"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.varianceEncodedInTarget = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "backgroundLabelId"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.backgroundLabelId = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "numClasses"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.numClasses = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "topK"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.topK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "keepTopK"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.keepTopK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "confidenceThreshold"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                params.confidenceThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "nmsThreshold"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                params.nmsThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "confSigmoid"))
+            {
+                params.confSigmoid = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "isNormalized"))
+            {
+                params.isNormalized = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "inputOrder"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                const int size = fields[i].length;
+                const int* o = static_cast<const int*>(fields[i].data);
+                for (int j = 0; j < size; j++)
+                {
+                    params.inputOrder[j] = *o;
+                    o++;
+                }
+            }
+            else if (!strcmp(attrName, "codeType"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.codeType = static_cast<CodeTypeSSD>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "scoreBits"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                mScoreBits = *(static_cast<const int32_t*>(fields[i].data));
+            }
+            else if (!strcmp(attrName, "isBatchAgnostic"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.isBatchAgnostic = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
             }
         }
-        else if (!strcmp(attrName, "codeType"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.codeType = static_cast<CodeTypeSSD>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "scoreBits"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            mScoreBits = *(static_cast<const int32_t*>(fields[i].data));
-        }
-        else if (!strcmp(attrName, "isBatchAgnostic"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.isBatchAgnostic = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-    }
 
-    DetectionOutput* obj = new DetectionOutput(params);
-    obj->setScoreBits(mScoreBits);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+        DetectionOutput* obj = new DetectionOutput(params);
+        obj->setScoreBits(mScoreBits);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 IPluginV2DynamicExt* NMSDynamicPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    const PluginField* fields = fc->fields;
-    // Default init values for TF SSD network
-    params.codeType = CodeTypeSSD::TF_CENTER;
-    params.inputOrder[0] = 0;
-    params.inputOrder[1] = 2;
-    params.inputOrder[2] = 1;
-    // scoreBits defaults to 16
-    mScoreBits = 16;
-
-    // Read configurations from  each fields
-    for (int i = 0; i < fc->nbFields; ++i)
+    try
     {
-        const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "shareLocation"))
+        const PluginField* fields = fc->fields;
+        // Default init values for TF SSD network
+        params.codeType = CodeTypeSSD::TF_CENTER;
+        params.inputOrder[0] = 0;
+        params.inputOrder[1] = 2;
+        params.inputOrder[2] = 1;
+        // scoreBits defaults to 16
+        mScoreBits = 16;
+
+        // Read configurations from  each fields
+        for (int i = 0; i < fc->nbFields; ++i)
         {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.shareLocation = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "varianceEncodedInTarget"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.varianceEncodedInTarget = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "backgroundLabelId"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.backgroundLabelId = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "numClasses"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.numClasses = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "topK"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.topK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "keepTopK"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.keepTopK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "confidenceThreshold"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            params.confidenceThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "nmsThreshold"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            params.nmsThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "confSigmoid"))
-        {
-            params.confSigmoid = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "isNormalized"))
-        {
-            params.isNormalized = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "inputOrder"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            const int size = fields[i].length;
-            const int* o = static_cast<const int*>(fields[i].data);
-            for (int j = 0; j < size; j++)
+            const char* attrName = fields[i].name;
+            if (!strcmp(attrName, "shareLocation"))
             {
-                params.inputOrder[j] = *o;
-                o++;
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.shareLocation = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "varianceEncodedInTarget"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.varianceEncodedInTarget = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "backgroundLabelId"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.backgroundLabelId = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "numClasses"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.numClasses = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "topK"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.topK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "keepTopK"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.keepTopK = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "confidenceThreshold"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                params.confidenceThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "nmsThreshold"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                params.nmsThreshold = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "confSigmoid"))
+            {
+                params.confSigmoid = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "isNormalized"))
+            {
+                params.isNormalized = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "inputOrder"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                const int size = fields[i].length;
+                const int* o = static_cast<const int*>(fields[i].data);
+                for (int j = 0; j < size; j++)
+                {
+                    params.inputOrder[j] = *o;
+                    o++;
+                }
+            }
+            else if (!strcmp(attrName, "codeType"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.codeType = static_cast<CodeTypeSSD>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "scoreBits"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                mScoreBits = *(static_cast<const int32_t*>(fields[i].data));
             }
         }
-        else if (!strcmp(attrName, "codeType"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.codeType = static_cast<CodeTypeSSD>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "scoreBits"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            mScoreBits = *(static_cast<const int32_t*>(fields[i].data));
-        }
+
+        DetectionOutputDynamic* obj = new DetectionOutputDynamic(params);
+        obj->setScoreBits(mScoreBits);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
     }
-
-    DetectionOutputDynamic* obj = new DetectionOutputDynamic(params);
-    obj->setScoreBits(mScoreBits);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+    catch (const std::exception& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
-IPluginV2Ext* NMSPluginCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength) noexcept
+IPluginV2Ext* NMSPluginCreator::deserializePlugin(
+    const char* name, const void* serialData, size_t serialLength) noexcept
 {
-    // This object will be deleted when the network is destroyed, which will
-    // call NMS::destroy()
-    DetectionOutput* obj = new DetectionOutput(serialData, serialLength);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+    try
+    {
+        // This object will be deleted when the network is destroyed, which will
+        // call NMS::destroy()
+        DetectionOutput* obj = new DetectionOutput(serialData, serialLength);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
-IPluginV2DynamicExt* NMSDynamicPluginCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength) noexcept
+IPluginV2DynamicExt* NMSDynamicPluginCreator::deserializePlugin(
+    const char* name, const void* serialData, size_t serialLength) noexcept
 {
-    // This object will be deleted when the network is destroyed, which will
-    // call NMS::destroy()
-    DetectionOutputDynamic* obj = new DetectionOutputDynamic(serialData, serialLength);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+    try
+    {
+        // This object will be deleted when the network is destroyed, which will
+        // call NMS::destroy()
+        DetectionOutputDynamic* obj = new DetectionOutputDynamic(serialData, serialLength);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (const std::exception& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }

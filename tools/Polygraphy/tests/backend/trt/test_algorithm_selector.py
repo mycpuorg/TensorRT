@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -104,7 +105,7 @@ ALGO_EQ_CASES = [
 
 
 @pytest.mark.skipif(mod.version(trt.__version__) < mod.version("8.0"), reason="Unsupported for TRT 7.2 and older")
-class TestAlgorithm(object):
+class TestAlgorithm:
     @pytest.mark.parametrize("left, right, expected", ALGO_EQ_CASES)
     def test_equality(self, left, right, expected):
         assert (left == right) == expected
@@ -115,7 +116,7 @@ FakeAlgorithm = namedtuple("FakeAlgorithm", ["algorithm_variant", "io_info"])
 FakeAlgorithm.get_algorithm_io_info = lambda this, index: this.io_info[index]
 
 FakeAlgorithmVariant = namedtuple("FakeAlgorithmVariant", ["implementation", "tactic"])
-FakeAlgorithmIOInfo = namedtuple("FakeAlgorithmIOInfo", ["tensor_format", "dtype"])
+FakeAlgorithmIOInfo = namedtuple("FakeAlgorithmIOInfo", ["tensor_format", "dtype", "strides"])
 
 
 def fake_context(name):
@@ -123,11 +124,11 @@ def fake_context(name):
 
 
 def fake_algo(implementation=6, tactic=0, io=None):
-    io_info = [FakeAlgorithmIOInfo(tensor_format=trt.TensorFormat.LINEAR, dtype=trt.float32)] * 2
+    io_info = [FakeAlgorithmIOInfo(tensor_format=trt.TensorFormat.LINEAR, dtype=trt.float32, strides=(4, 5, 6))] * 2
     if io:
         io_info = []
-        for fmt, dtype in io:
-            io_info.append(FakeAlgorithmIOInfo(tensor_format=fmt, dtype=dtype))
+        for fmt, dtype, strides in io:
+            io_info.append(FakeAlgorithmIOInfo(tensor_format=fmt, dtype=dtype, strides=strides))
 
     trt_algo = FakeAlgorithm(algorithm_variant=FakeAlgorithmVariant(implementation, tactic), io_info=io_info)
     return trt_algo
@@ -170,7 +171,7 @@ def replay(request):
 
 
 @pytest.mark.skipif(mod.version(trt.__version__) < mod.version("8.0"), reason="Unsupported for TRT 7.2 and older")
-class TestReplayer(object):
+class TestReplayer:
     def test_basic(self, replay):
         context, _, algo, replay_data, _ = replay
         replayer = TacticReplayer(replay_data)
@@ -196,10 +197,16 @@ class TestReplayer(object):
         [
             fake_algo(2),
             fake_algo(tactic=2),
-            fake_algo(io=[(trt.TensorFormat.CHW32, trt.float32), (trt.TensorFormat.LINEAR, trt.float32)]),
-            fake_algo(io=[(trt.TensorFormat.LINEAR, trt.int8), (trt.TensorFormat.LINEAR, trt.float32)]),
-            fake_algo(io=[(trt.TensorFormat.LINEAR, trt.float32), (trt.TensorFormat.CHW32, trt.float32)]),
-            fake_algo(io=[(trt.TensorFormat.LINEAR, trt.float32), (trt.TensorFormat.LINEAR, trt.int32)]),
+            fake_algo(
+                io=[(trt.TensorFormat.CHW32, trt.float32, (1, 2)), (trt.TensorFormat.LINEAR, trt.float32, (1, 2))]
+            ),
+            fake_algo(io=[(trt.TensorFormat.LINEAR, trt.int8, (1, 2)), (trt.TensorFormat.LINEAR, trt.float32, (1, 2))]),
+            fake_algo(
+                io=[(trt.TensorFormat.LINEAR, trt.float32, (1, 2)), (trt.TensorFormat.CHW32, trt.float32, (1, 2))]
+            ),
+            fake_algo(
+                io=[(trt.TensorFormat.LINEAR, trt.float32, (1, 2)), (trt.TensorFormat.LINEAR, trt.int32, (1, 2))]
+            ),
         ],
     )
     def test_different_algo_fails(self, replay, algo):
@@ -217,7 +224,7 @@ class TestReplayer(object):
 
 
 @pytest.mark.skipif(mod.version(trt.__version__) < mod.version("8.0"), reason="Unsupported for TRT 7.2 and older")
-class TestRecorder(object):
+class TestRecorder:
     def test_basic(self, replay):
         context, poly_algo, algo, _, replay_data = replay
         assert isinstance(replay_data, str) or not replay_data

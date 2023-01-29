@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,9 +15,13 @@
 # limitations under the License.
 #
 import contextlib
+import json
+import os
+import signal
 
 from polygraphy import config, mod, util
 from polygraphy.common import TensorMetadata
+from polygraphy.exception import PolygraphyException
 from polygraphy.logger import G_LOGGER, LogMode
 
 trt = mod.lazy_import("tensorrt")
@@ -35,14 +40,42 @@ def get_trt_logger():
         trt.Logger: The TensorRT logger.
     """
     global TRT_LOGGER
+
+    LoggerType = trt.Logger
+    if mod.version(trt.__version__) >= mod.version("8.0"):
+
+        class CustomTrtLogger(trt.ILogger):
+            def __init__(self):
+                trt.ILogger.__init__(self)
+
+            def log(self, severity, msg):
+                try:
+                    log_func = {
+                        # This function cannot throw, so `critical` should not be used here!
+                        trt.Logger.INTERNAL_ERROR: G_LOGGER.error,
+                        trt.Logger.ERROR: G_LOGGER.error,
+                        # Reduce warning spam from TRT.
+                        trt.Logger.WARNING: lambda msg: G_LOGGER.warning(msg, mode=LogMode.ONCE),
+                        trt.Logger.INFO: G_LOGGER.verbose,
+                        trt.Logger.VERBOSE: G_LOGGER.extra_verbose,
+                    }.get(severity, G_LOGGER.super_verbose)
+
+                    log_func(msg)
+                except KeyboardInterrupt:
+                    # `log()` is `noexcept` so we need to convert exceptions to signals so that
+                    # ctrl-C will work as expected.
+                    os.kill(os.getpid(), signal.SIGTERM)
+
+        LoggerType = CustomTrtLogger
+
     if TRT_LOGGER is None:
-        TRT_LOGGER = trt.Logger()
+        TRT_LOGGER = LoggerType()
     return TRT_LOGGER
 
 
 def fail_unavailable(what):
     G_LOGGER.backtrace()
-    G_LOGGER.critical("{:} is not available on TensorRT version {:}.".format(what, trt.__version__))
+    G_LOGGER.critical(f"{what} is not available on TensorRT version {trt.__version__}.")
 
 
 def check_onnx_parser_errors(parser, success):
@@ -64,7 +97,7 @@ def get_layer_class_mapping():
             layer_cls = getattr(trt, layer_cls)
         except AttributeError:
             if config.INTERNAL_CORRECTNESS_CHECKS:
-                G_LOGGER.warning("Could not find layer type: {:} or layer class: {:}".format(layer_type, layer_cls))
+                G_LOGGER.warning(f"Could not find layer type: {layer_type} or layer class: {layer_cls}")
         else:
             layer_class_mapping[layer_type] = layer_cls
 
@@ -110,6 +143,10 @@ def get_layer_class_mapping():
     try_add("ASSERTION", "IAssertionLayer")
     try_add("SCATTER", "IScatterLayer")
     try_add("EINSUM", "IEinsumLayer")
+    try_add("GRID_SAMPLE", "IGridSampleLayer")
+    try_add("ONE_HOT", "IOneHotLayer")
+    try_add("NON_ZERO", "INonZeroLayer")
+    try_add("NMS", "INMSLayer")
 
     return layer_class_mapping
 
@@ -120,44 +157,54 @@ def np_dtype_from_trt(trt_dtype):
     return np.dtype(trt.nptype(trt_dtype))
 
 
-def get_network_input_metadata(network):
-    inputs = TensorMetadata()
+def get_network_input_names_meta(network):
+    names = []
+    meta = TensorMetadata()
     for i in range(network.num_inputs):
         tensor = network.get_input(i)
-        inputs.add(name=tensor.name, dtype=np_dtype_from_trt(tensor.dtype), shape=tensor.shape)
-    return inputs
+        names.append(tensor.name)
+        meta.add(name=tensor.name, dtype=np_dtype_from_trt(tensor.dtype), shape=tensor.shape)
+    return names, meta
 
 
-def get_network_output_metadata(network):
-    outputs = TensorMetadata()
+def get_network_output_names_meta(network):
+    names = []
+    meta = TensorMetadata()
     for i in range(network.num_outputs):
         tensor = network.get_output(i)
-        outputs.add(name=tensor.name, dtype=np_dtype_from_trt(tensor.dtype), shape=tensor.shape)
-    return outputs
+        names.append(tensor.name)
+        meta.add(name=tensor.name, dtype=np_dtype_from_trt(tensor.dtype), shape=tensor.shape)
+    return names, meta
 
 
-def get_layer_input_metadata(layer):
+def get_layer_input_names_meta(layer):
+    names = []
     meta = TensorMetadata()
     for i in range(layer.num_inputs):
         inp = layer.get_input(i)
         if inp:
+            names.append(inp.name)
             meta.add(inp.name, np_dtype_from_trt(inp.dtype), inp.shape)
-    return meta
+    return names, meta
 
 
-def get_layer_output_metadata(layer):
+def get_layer_output_names_meta(layer):
+    names = []
     meta = TensorMetadata()
     for i in range(layer.num_outputs):
-        outp = layer.get_output(i)
-        if outp:
-            meta.add(outp.name, np_dtype_from_trt(outp.dtype), outp.shape)
-    return meta
+        out = layer.get_output(i)
+        if out:
+            names.append(out.name)
+            meta.add(out.name, np_dtype_from_trt(out.dtype), out.shape)
+    return names, meta
 
 
 def str_from_layer(layer, index):
-    input_info = get_layer_input_metadata(layer)
-    output_info = get_layer_output_metadata(layer)
-    return util.str_from_layer("Layer", index, layer.name, layer.type, input_info, output_info)
+    input_names, input_meta = get_layer_input_names_meta(layer)
+    output_names, output_meta = get_layer_output_names_meta(layer)
+    return util.str_from_layer(
+        "Layer", index, layer.name, layer.type, input_names, input_meta, output_names, output_meta
+    )
 
 
 def get_layer_attribute_names(layer):
@@ -188,43 +235,41 @@ def get_layer_attribute_names(layer):
     ]
 
 
-def str_from_network(network, mode="full"):
+def str_from_network(network, show_layers=None, show_attrs=None, show_weights=None):
     """
     Converts a TensorRT network to a human-readable representation
 
     Args:
         network (trt.INetworkDefinition): The network.
-        mode (str): Controls what is displayed for each layer. Choices: ["none", "basic", "attrs", "full"]
+        show_layers (bool): Whether to display per-layer information.
+        show_attrs (bool): Whether to display per-layer attributes.
+        show_weights (bool): Whether to display the value of weights.
 
     Returns:
         str
     """
+    show_layers = util.default(show_layers, False)
+    show_attrs = util.default(show_attrs, False)
+    show_weights = util.default(show_weights, False)
+
     LAYER_TYPE_CLASS_MAPPING = get_layer_class_mapping()
 
-    network_str = "Name: {:} | {:} Batch Network{:}\n".format(
-        network.name,
-        "Implicit"
-        if hasattr(network, "has_implicit_batch_dimension") and network.has_implicit_batch_dimension
-        else "Explicit",
-        " with Explicit Precision "
-        if hasattr(network, "has_explicit_precision") and network.has_explicit_precision
-        else "",
-    )
+    network_str = f"Name: {network.name} | {'Implicit' if hasattr(network, 'has_implicit_batch_dimension') and network.has_implicit_batch_dimension else 'Explicit'} Batch Network{' with Explicit Precision ' if hasattr(network, 'has_explicit_precision') and network.has_explicit_precision else ''}\n"
     network_str += "\n"
 
-    input_metadata = get_network_input_metadata(network)
-    network_str += "---- {:} Network Input(s) ----\n{:}\n\n".format(len(input_metadata), input_metadata)
-    output_metadata = get_network_output_metadata(network)
-    network_str += "---- {:} Network Output(s) ----\n{:}\n\n".format(len(output_metadata), output_metadata)
-    network_str += "---- {:} Layer(s) ----\n".format(network.num_layers)
-    if mode != "none":
+    _, input_metadata = get_network_input_names_meta(network)
+    network_str += f"---- {len(input_metadata)} Network Input(s) ----\n{input_metadata}\n\n"
+    _, output_metadata = get_network_output_names_meta(network)
+    network_str += f"---- {len(output_metadata)} Network Output(s) ----\n{output_metadata}\n\n"
+    network_str += f"---- {network.num_layers} Layer(s) ----\n"
+    if show_layers:
         for index, layer in enumerate(network):
             if layer.type in LAYER_TYPE_CLASS_MAPPING:
                 layer.__class__ = LAYER_TYPE_CLASS_MAPPING[layer.type]
 
             network_str += str_from_layer(layer, index)
 
-            if mode in ["attrs", "full"]:
+            if show_attrs:
                 # Exclude special attributes, as well as any attributes of the base layer class (those can be displayed above).
                 attrs = get_layer_attribute_names(layer)
                 if attrs:
@@ -232,27 +277,25 @@ def str_from_network(network, mode="full"):
                 for attr in attrs:
                     with G_LOGGER.verbosity():
                         val = getattr(layer, attr)
-                    if mode == "full" or not isinstance(val, np.ndarray):
+                    if show_weights or not isinstance(val, np.ndarray):
                         attr_str = ""
                         if layer.name:
-                            attr_str += "{:}.".format(layer.name)
-                        network_str += util.indent_block("{:}{:} = {:}".format(attr_str, attr, val)) + "\n"
+                            attr_str += f"{layer.name}."
+                        network_str += util.indent_block(f"{attr_str}{attr} = {val}") + "\n"
             network_str += "\n"
 
     return util.indent_block(network_str, level=0)
 
 
-def _get_network_outputs(network):
-    return [network.get_output(index).name for index in range(network.num_outputs)]
-
-
-def check_outputs_not_found(not_found, available_outputs):
-    if not_found:
-        available_outputs = util.unique_list(available_outputs)
-        G_LOGGER.critical(
-            "The following outputs were not found: {:}.\n"
-            "Note: Available tensors:\n\t{:}".format(not_found, "\n\t".join(available_outputs))
-        )
+def get_all_tensors(network):
+    all_tensors = set()
+    for layer in network:
+        for i in range(layer.num_inputs):
+            all_tensors.add(layer.get_input(i))
+        for i in range(layer.num_outputs):
+            all_tensors.add(layer.get_output(i))
+    # Optional tensors that are omitted are reported as `None`s, so we need to exclude them.
+    return {t.name: t for t in all_tensors if t is not None}
 
 
 def mark_outputs(network, outputs):
@@ -263,24 +306,21 @@ def mark_outputs(network, outputs):
         network (trt.INetworkDefinition): The network in which to mark outputs.
         outputs (Sequence[str]): The names of tensors to mark as outputs.
     """
-    outputs = set(outputs)
-    all_outputs = []
-    for layer in network:
-        for index in range(layer.num_outputs):
-            tensor = layer.get_output(index)
-            all_outputs.append(tensor.name)
-            # Clear all old outputs
-            if tensor.is_network_output:
-                network.unmark_output(tensor)
+    outputs = util.unique_list(outputs)
 
-            if tensor.name in outputs:
-                if not tensor.is_network_output:
-                    G_LOGGER.ultra_verbose("Marking {:} as an output".format(tensor.name))
-                    network.mark_output(tensor)
+    tensor_map = get_all_tensors(network)
+    util.check_sequence_contains(
+        tensor_map.keys(), outputs, name="the network", items_name="outputs", check_extra=False
+    )
 
-    marked_outputs = set(_get_network_outputs(network))
-    not_found = outputs - marked_outputs
-    check_outputs_not_found(not_found, all_outputs)
+    for tensor in tensor_map.values():
+        # Clear all old outputs
+        if tensor.is_network_output:
+            network.unmark_output(tensor)
+
+    for name in outputs:
+        G_LOGGER.ultra_verbose(f"Marking {name} as an output")
+        network.mark_output(tensor_map[name])
 
 
 def mark_layerwise(network):
@@ -307,62 +347,96 @@ def mark_layerwise(network):
         if should_mark_layer:
             for index in range(layer.num_outputs):
                 tensor = layer.get_output(index)
-                outputs.append(tensor.name)
+                if tensor is not None:
+                    outputs.append(tensor.name)
 
-    G_LOGGER.verbose("Marking {:} tensors as outputs".format(len(outputs)))
+    G_LOGGER.verbose(f"Marking {len(outputs)} tensors as outputs")
     mark_outputs(network, outputs)
 
 
 def unmark_outputs(network, outputs):
-    outputs = set(outputs)
+    outputs = util.unique_list(outputs)
 
-    unmarked_outputs = set()
-    for layer in network:
-        for index in range(layer.num_outputs):
-            tensor = layer.get_output(index)
-            if tensor.is_network_output and tensor.name in outputs:
-                network.unmark_output(tensor)
-                unmarked_outputs.add(tensor.name)
-    not_found = outputs - unmarked_outputs
-    check_outputs_not_found(not_found, _get_network_outputs(network))
+    tensor_map = get_all_tensors(network)
+    util.check_sequence_contains(
+        tensor_map.keys(), outputs, name="the network", items_name="outputs", check_extra=False
+    )
+
+    for name in outputs:
+        tensor = tensor_map[name]
+        if tensor.is_network_output:
+            network.unmark_output(tensor)
 
 
 def str_from_config(config):
-    config_str = "{:20} | {:} bytes ({:.2f} MiB)".format(
-        "Workspace", config.max_workspace_size, config.max_workspace_size / (1024.0 ** 2)
-    )
-    config_str += "\n{:20} | ".format("Precision")
-    with contextlib.suppress(AttributeError):
-        config_str += "TF32: {:}, ".format(config.get_flag(trt.BuilderFlag.TF32))
-    config_str += "FP16: {:}, INT8: {:}, ".format(
-        config.get_flag(trt.BuilderFlag.FP16), config.get_flag(trt.BuilderFlag.INT8)
-    )
+    # Check the default device type so that we can trigger this from the tests.
+    # On non-DLA platforms, config.DLA_core can never be set to anything other than -1,
+    # but default_device_type can be set to DLA..
+    using_dla = config.DLA_core >= 0 or config.default_device_type == trt.DeviceType.DLA
 
-    with contextlib.suppress(AttributeError):
-        config_str += "Obey Precision Constraints: {:}, ".format(
-            config.get_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
-        )
+    lines = []
 
-    config_str += "Strict Types: {:}".format(config.get_flag(trt.BuilderFlag.STRICT_TYPES))
+    def str_from_list(lst):
+        return "[" + ", ".join(lst) + "]"
 
+    def add_line(title, line):
+        lines.append((f"{title:{22}} | " + line).strip())
+
+    def get_enabled_enum_vals(EnumType, is_enabled):
+        # is_enabled is a Callable[[enum_val], bool] which reports whether to include the enum value.
+        return [name for name, enum_val in EnumType.__members__.items() if is_enabled(enum_val)]
+
+    # Flags
+    enabled_builder_flags = get_enabled_enum_vals(trt.BuilderFlag, lambda flag: config.get_flag(flag))
+    add_line("Flags", f"{str_from_list(enabled_builder_flags)}")
+
+    # Engine Capability
     with contextlib.suppress(AttributeError):
-        source_vals = [
-            val.name for val in trt.TacticSource.__members__.values() if (1 << int(val)) & config.get_tactic_sources()
+        add_line("Engine Capability", str(config.engine_capability))
+
+    # Memory Pools
+    with contextlib.suppress(AttributeError):
+        mem_pool_limits = [
+            f"{name}: {config.get_memory_pool_limit(pool_type) / float(1<<20):.2f} MiB"
+            for name, pool_type in trt.MemoryPoolType.__members__.items()
+            # Only show DLA memory pools when DLA is in use
+            if (not name.startswith("DLA") or using_dla)
         ]
-        config_str += "\n{:20} | {:}".format("Tactic Sources", source_vals)
+        add_line("Memory Pools", f"{str_from_list(mem_pool_limits)}")
 
+    # Tactic Sources
     with contextlib.suppress(AttributeError):
-        config_str += "\n{:20} | {:}".format("Safety Restricted", config.get_flag(trt.BuilderFlag.SAFETY_SCOPE))
+        source_vals = get_enabled_enum_vals(trt.TacticSource, lambda val: (1 << int(val)) & config.get_tactic_sources())
+        add_line("Tactic Sources", f"{str_from_list(source_vals)}")
 
+    # DLA
+    if using_dla:
+        add_line("DLA", f"Default Device Type: {config.default_device_type}, Core: {config.DLA_core}")
+
+    # Profiling Verbosity
+    with contextlib.suppress(AttributeError):
+        add_line("Profiling Verbosity", f"{config.profiling_verbosity}")
+
+    # Optimization Profiles
+    if config.num_optimization_profiles > 1:  # Not particularly interesting unless there are multiple.
+        add_line("Optimization Profiles", f"{config.num_optimization_profiles} profile(s)")
+
+    # Preview Features
+    with contextlib.suppress(AttributeError):
+        feature_vals = get_enabled_enum_vals(trt.PreviewFeature, lambda val: config.get_preview_feature(val))
+        if feature_vals:
+            add_line("Preview Features", f"{str_from_list(feature_vals)}")
+
+    # Calibrator
     if config.int8_calibrator:
-        config_str += "\n{:20} | {:}".format("Calibrator", config.int8_calibrator)
-    config_str += "\n{:20} | {:} profile(s)".format("Profiles", config.num_optimization_profiles)
-    return config_str
+        add_line("Calibrator", f"{config.int8_calibrator}")
+
+    return "\n".join(lines)
 
 
 def check_profile(profile):
     if not bool(profile):
-        G_LOGGER.critical("Profile is not valid, please provide profile data.\nNote: profile was: {:}".format(profile))
+        G_LOGGER.critical(f"Profile is not valid, please provide profile data.\nNote: profile was: {profile}")
     return profile
 
 
@@ -372,42 +446,97 @@ def str_from_tensor(tensor, is_shape_tensor):
         ret += "shape-tensor"
     else:
         ret += "tensor"
-    ret += ": {:} (dtype={:}, shape={:})".format(tensor.name, tensor.dtype, tensor.shape)
+    ret += f": {tensor.name} (dtype={tensor.dtype}, shape={tensor.shape})"
     return ret
 
 
-def get_input_metadata_from_profile(profile, network):
+def get_input_metadata_from_network(network, profile=None):
     """
-    Returns metadata about the inputs based on the OPT values set in a profile.
+    Returns metadata about the inputs of a network, referring to the opt values
+    set in a profile if available.
 
     Args:
-        profile (trt.IOptimizationProfile):
-                The profile from which to retrieve input metada.
         network (trt.INetworkDefinition):
                 The network the profile applies to.
+
+
+        profile (trt.IOptimizationProfile):
+                The profile from which to retrieve input metadata.
 
     Returns:
         TensorMetadata:
                 A mapping of input names to their types and shapes.
                 Shapes are retrieved from the OPT values in the profile.
+
+    Raises:
+        PolygraphyException:
+                If the network has dynamic shapes or shape tensor inputs but no profile
+                was provided.
     """
     input_metadata = TensorMetadata()
     for index in range(network.num_inputs):
         tensor = network.get_input(index)
-        if tensor.is_shape_tensor:
-            shapes = profile.get_shape_input(tensor.name)
+        # Only access the profile if we actually need to.
+        # This way, this method works with static networks even without a profile set.
+        if not tensor.is_shape_tensor and not util.is_shape_dynamic(tensor.shape):
+            shape = tensor.shape
         else:
-            shapes = profile.get_shape(tensor.name)
+            if profile is None:
+                G_LOGGER.critical(
+                    f"Could not retrieve shape of tensor: {tensor.name} because it "
+                    + ("is a shape tensor" if tensor.is_shape_tensor else "has a dynamic shape")
+                    + " and no profile was provided. "
+                )
 
-        if tuple(shapes[0]) != tuple(shapes[2]):
-            G_LOGGER.warning(
-                "Will use `opt` shapes from profile 0 for calibration. "
-                "Note that even though `min` != `max` in this profile, calibration "
-                "will use fixed input shapes (this is not necessarily an issue)."
-            )
-        # Always use opt shape
-        input_metadata.add(name=tensor.name, dtype=np_dtype_from_trt(tensor.dtype), shape=shapes[1])
+            if tensor.is_shape_tensor:
+                min_shape, opt_shape, max_shape = profile.get_shape_input(tensor.name)
+            else:
+                min_shape, opt_shape, max_shape = profile.get_shape(tensor.name)
+
+            if tuple(min_shape) != tuple(max_shape):
+                G_LOGGER.warning(
+                    "Will use `opt` shapes from profile 0 for calibration. "
+                    "Note that even though `min` != `max` in this profile, calibration "
+                    "will use fixed input shapes. This is not necessarily an issue."
+                )
+            # Always use opt shape
+            shape = opt_shape
+        input_metadata.add(name=tensor.name, dtype=np_dtype_from_trt(tensor.dtype), shape=shape)
     return input_metadata
+
+
+# calib_profile parameter is used to bypass `get_calibration_profile()` to make this work on TRT 7.0 and older.
+def try_setup_polygraphy_calibrator(config, network, calib_profile=None):
+    """
+    Tries to call setup methods specific to Polygraphy calibrators.
+    Returns early if there is no calibrator or if it is not a Polygraphy calibrator.
+    """
+    calibrator = config.int8_calibrator
+    if calibrator is None or not (
+        hasattr(calibrator, "is_polygraphy_calibrator") and calibrator.is_polygraphy_calibrator
+    ):
+        # No calibrator or not a Polygraphy calibrator.
+        return
+
+    if calib_profile is None:
+        try:
+            calib_profile = config.get_calibration_profile()
+        except AttributeError:
+            G_LOGGER.extra_verbose("Cannot get calibration profile on TensorRT 7.0 and older.")
+            # Return early so we don't emit extraneous warnings on TRT 7.0 and older.
+            return
+
+    try:
+        input_metadata = get_input_metadata_from_network(network, calib_profile)
+    except PolygraphyException as err:
+        G_LOGGER.warning(
+            "Could not determine input_metadata to provide to the calibrator because no calibration profile is set. "
+            "Please either set a calibration profile in the config or call `calibrator.set_input_metadata()` manually. "
+            f"\nNote: Error was:\n{err}",
+            mode=LogMode.ONCE,
+        )
+    else:
+        calibrator.set_input_metadata(input_metadata)
 
 
 def add_binding_to_metadata(engine, binding, metadata, name_binding):
@@ -436,51 +565,115 @@ def get_output_metadata_from_engine(engine, start_binding, end_binding):
     return outputs
 
 
-def str_from_engine(engine):
+def str_from_engine(engine, show_layers=None, show_attrs=None):
+    show_layers = util.default(show_layers, False)
+    show_attrs = util.default(show_attrs, False)
+
     bindings_per_profile = get_bindings_per_profile(engine)
-    engine_str = "Name: {:} | {:}{:} Batch Engine ({:} layers)\n".format(
-        engine.name,
-        "Refittable " if engine.refittable else "",
-        "Implicit"
-        if hasattr(engine, "has_implicit_batch_dimension") and engine.has_implicit_batch_dimension
-        else "Explicit",
-        engine.num_layers,
-    )
+    engine_str = f"Name: {engine.name} | {'Refittable ' if engine.refittable else ''}{'Implicit' if hasattr(engine, 'has_implicit_batch_dimension') and engine.has_implicit_batch_dimension else 'Explicit'} Batch Engine\n"
     engine_str += "\n"
 
     # Show metadata for the first profile (i.e. the dynamic shapes)
     input_metadata = get_input_metadata_from_engine(engine, 0, bindings_per_profile)
-    engine_str += "---- {:} Engine Input(s) ----\n{:}\n\n".format(len(input_metadata), input_metadata)
+    engine_str += f"---- {len(input_metadata)} Engine Input(s) ----\n{input_metadata}\n\n"
     output_metadata = get_output_metadata_from_engine(engine, 0, bindings_per_profile)
-    engine_str += "---- {:} Engine Output(s) ----\n{:}\n\n".format(len(output_metadata), output_metadata)
+    engine_str += f"---- {len(output_metadata)} Engine Output(s) ----\n{output_metadata}\n\n"
 
-    engine_str += "---- Memory ----\nDevice Memory: {:} bytes\n\n".format(engine.device_memory_size)
+    engine_str += f"---- Memory ----\nDevice Memory: {engine.device_memory_size} bytes\n\n"
 
-    engine_str += "---- {:} Profile(s) ({:} Binding(s) Each) ----\n".format(
-        engine.num_optimization_profiles, bindings_per_profile
-    )
+    engine_str += f"---- {engine.num_optimization_profiles} Profile(s) ({bindings_per_profile} Binding(s) Each) ----\n"
     for profile_index in range(engine.num_optimization_profiles):
-        engine_str += "- Profile: {:}\n".format(profile_index)
+        engine_str += f"- Profile: {profile_index}\n"
 
         max_width = max([len(binding) for binding in engine]) + 8
         for offset in range(bindings_per_profile):
             binding = profile_index * bindings_per_profile + offset
-            name = "[Name: {:}]".format(engine.get_binding_name(binding))
-            engine_str += util.indent_block(
-                "Binding Index: {:} {:} {:<{max_width}}".format(
-                    binding, "(Input) " if engine.binding_is_input(binding) else "(Output)", name, max_width=max_width
-                )
-            )
+            name = f"[Name: {engine.get_binding_name(binding)}]"
+            binding_type = "(Input) " if engine.binding_is_input(binding) else "(Output)"
+            engine_str += util.indent_block(f"Binding Index: {binding} {binding_type} {name:<{max_width}}")
 
             if engine.binding_is_input(binding):
                 if engine.is_shape_binding(binding):
                     min_shape, opt_shape, max_shape = engine.get_profile_shape_input(profile_index, binding)
                 else:
                     min_shape, opt_shape, max_shape = engine.get_profile_shape(profile_index, binding)
-                engine_str += " | Shapes: min={:}, opt={:}, max={:}\n".format(min_shape, opt_shape, max_shape)
+                engine_str += f" | Shapes: min={min_shape}, opt={opt_shape}, max={max_shape}\n"
             else:
-                engine_str += " | Shape: {:}\n".format(engine.get_binding_shape(binding))
+                engine_str += f" | Shape: {engine.get_binding_shape(binding)}\n"
         engine_str += "\n"
+
+    layers_per_profile = engine.num_layers // engine.num_optimization_profiles
+    engine_str += (
+        f"---- {layers_per_profile} Layer(s){' Per Profile' if engine.num_optimization_profiles > 1 else ''} ----\n"
+    )
+    if show_layers:
+        try:
+            inspector = engine.create_engine_inspector()
+        except AttributeError:
+            G_LOGGER.warning(
+                f"Cannot show layer information because IEngineInspector is not available in this version of TensorRT ({trt.__version__})"
+            )
+        else:
+            for profile_idx in range(engine.num_optimization_profiles):
+                indent_level = 0
+                if engine.num_optimization_profiles >= 1:
+                    indent_level = 1
+                    engine_str += f"- Profile: {profile_idx}\n"
+
+                offset = profile_idx * layers_per_profile
+                for index in range(layers_per_profile):
+                    layer_info = json.loads(
+                        inspector.get_layer_information(offset + index, trt.LayerInformationFormat.JSON)
+                    )
+
+                    op = "Unknown"
+                    input_names, input_meta = [], TensorMetadata()
+                    output_names, output_meta = [], TensorMetadata()
+                    origin = "Unknown"
+                    tactic = "Unknown"
+                    if engine.profiling_verbosity == trt.ProfilingVerbosity.DETAILED:
+                        name = layer_info.get("Name", "Unknown")
+                        op = layer_info.get("LayerType", "Unknown")
+
+                        def names_meta_from_inspector(key):
+                            names = []
+                            meta = TensorMetadata()
+                            info = layer_info.get(key)
+                            if info is None:
+                                return meta
+                            for elem in info:
+                                names.append(elem["Name"])
+                                meta.add(name=elem["Name"], dtype=None, shape=elem["Dimensions"])
+                            return names, meta
+
+                        input_names, input_meta = names_meta_from_inspector("Inputs")
+                        output_names, output_meta = names_meta_from_inspector("Outputs")
+                        origin = layer_info.get("Origin", "Unknown")
+                        tactic = layer_info.get("TacticValue", "Unknown")
+                    else:
+                        G_LOGGER.warning(
+                            f"This engine was created with a profiling verbosity of: {engine.profiling_verbosity}. Some layer information may be missing. Try setting a higher profiling verbosity to see more detailed layer information. ",
+                            mode=LogMode.ONCE,
+                        )
+                        name = layer_info
+
+                    engine_str += (
+                        util.indent_block(
+                            util.str_from_layer(
+                                "Layer", index, name, op, input_names, input_meta, output_names, output_meta
+                            ),
+                            indent_level,
+                        )
+                        + "\n"
+                    )
+
+                    if show_attrs:
+                        engine_str += util.indent_block("---- Attributes ----", indent_level + 1) + "\n"
+                        engine_str += util.indent_block(f"Origin = {origin}", indent_level + 1) + "\n"
+                        engine_str += util.indent_block(f"Tactic = {tactic}", indent_level + 1) + "\n"
+
+                    engine_str += "\n"
+
     return util.indent_block(engine_str, level=0)
 
 
@@ -506,9 +699,7 @@ def get_active_profile_bindings(context):
     end_binding = start_binding + bindings_per_profile
 
     G_LOGGER.ultra_verbose(
-        "Total # of Profiles: {:}, Bindings Per Profile: {:}, Active Profile: {:}, "
-        "Start Binding: {:}, End Binding: {:}".format(
-            context.engine.num_optimization_profiles, bindings_per_profile, active_profile, start_binding, end_binding
-        )
+        f"Total # of Profiles: {context.engine.num_optimization_profiles}, Bindings Per Profile: {bindings_per_profile}, "
+        f"Active Profile: {active_profile}, Start Binding: {start_binding}, End Binding: {end_binding}"
     )
     return start_binding, end_binding

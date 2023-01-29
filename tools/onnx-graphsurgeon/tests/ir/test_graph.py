@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,12 +18,14 @@
 import copy
 
 import numpy as np
+import onnx
 import onnx_graphsurgeon as gs
 import pytest
 from onnx_graphsurgeon.ir.graph import Graph
 from onnx_graphsurgeon.ir.node import Node
 from onnx_graphsurgeon.ir.tensor import Constant, LazyValues, Variable
 from onnx_graphsurgeon.logger.logger import G_LOGGER
+from onnx_graphsurgeon.util import misc
 from onnx_graphsurgeon.util.exception import OnnxGraphSurgeonException
 from onnx_graphsurgeon.util.misc import SynchronizedList
 from onnx_models import const_foldable, shape_cast_elision
@@ -36,6 +39,11 @@ def shape(self, inp):
 
 
 @Graph.register()
+def cast(self, inp, to):
+    return self.layer(op="Cast", inputs=[inp], outputs=["cast_out"], attrs={"to": to})[0]
+
+
+@Graph.register()
 def constant(self, values):
     return self.layer(op="Constant", inputs=[], outputs=["constant_out"], attrs={"value": Constant("values", values)})[
         0
@@ -45,6 +53,13 @@ def constant(self, values):
 @Graph.register()
 def identity(self, inp):
     out = self.layer(op="Identity", inputs=[inp], outputs=["identity_out"])[0]
+    out.dtype = inp.dtype
+    return out
+
+
+@Graph.register()
+def relu(self, inp):
+    out = self.layer(op="Relu", inputs=[inp], outputs=["relu_out"])[0]
     out.dtype = inp.dtype
     return out
 
@@ -93,6 +108,34 @@ def if_op(self, cond, then_graph, else_graph):
     return self.layer(
         op="If", inputs=[cond], outputs=["if_out"], attrs={"then_branch": then_graph, "else_branch": else_graph}
     )[0]
+
+
+@gs.Graph.register()
+def tile(self, inp, repeats):
+    out = self.layer(op="Tile", inputs=[inp, repeats], outputs=["tile_out"])[0]
+    out.dtype = inp.dtype
+    return out
+
+
+@gs.Graph.register()
+def dequantize_linear(self, inp, scale, zero_point, axis=1):
+    out = self.layer(
+        op="DequantizeLinear", inputs=[inp, scale, zero_point], outputs=["dequantize_linear_out"], attrs={"axis": axis}
+    )[0]
+    out.dtype = np.float32
+    return out
+
+
+@gs.Graph.register()
+def quantize_linear(self, inp, out_scale, out_zero_point, axis=1):
+    out = self.layer(
+        op="QuantizeLinear",
+        inputs=[inp, out_scale, out_zero_point],
+        outputs=["quantize_linear_out"],
+        attrs={"axis": axis},
+    )[0]
+    out.dtype = np.int8
+    return out
 
 
 # Generates a graph where an outer node has no outputs except
@@ -396,10 +439,72 @@ def toposort_multi_tier_input_graph():
     return Graph(nodes=nodes, inputs=inputs, outputs=outputs), expected_node_order
 
 
+# Graph structure:
+# x0
+# |
+# Add
+# |
+# x1
+# |
+# Relu
+# |
+# x2
+#
+# If:
+#   Then:
+#          x1  x2
+#           |  |
+#           Add
+#            |
+#           res
+#   Else:
+#          x1  x2
+#           |  |
+#           Add
+#            |
+#           res
+#  |
+# out
+#
+# In this graph, the subgraph of If implicitly depends on x1/x2 from the outer graph, so the parent If
+# node must come after the outer Add/ReLU nodes.
+# If we fail to consider such implicit inputs, the If will remain the first node.
+def toposort_implicit_subgraph_inputs_graph():
+    def make_var(name):
+        return Variable(name, shape=(1, 1), dtype=np.float32)
+
+    # Main graph
+    inputs = [make_var("x0")]
+    const = Constant(name="const", values=np.array([[1.5]], dtype=np.float32))
+    cond = Constant(name="cond", values=np.array([True]))
+    x1, x2 = [make_var("x1"), make_var("x2")]
+    outputs = [make_var("out")]
+
+    # Subgraphs for If
+    subgraph_outputs = [make_var("res")]
+    subgraph_nodes = [Node(op="Add", name="SubgraphTest0", inputs=[x1, x2], outputs=subgraph_outputs)]
+    subgraph = Graph(nodes=subgraph_nodes, outputs=subgraph_outputs)
+
+    nodes = [
+        Node(
+            op="If",
+            name="Test2",
+            inputs=[cond],
+            outputs=outputs,
+            attrs={"then_branch": subgraph, "else_branch": subgraph},
+        ),
+        Node(op="Relu", name="Test1", inputs=[x1], outputs=[x2]),
+        Node(op="Add", name="Test0", inputs=inputs + [const], outputs=[x1]),
+    ]
+    expected_node_order = [nodes[2], nodes[1], nodes[0]]
+    return Graph(nodes=nodes, inputs=inputs, outputs=outputs), expected_node_order
+
+
 TOPOSORT_TEST_CASES = [
     toposort_linear_graph,
     toposort_multi_tier_output_graph,
     toposort_multi_tier_input_graph,
+    toposort_implicit_subgraph_inputs_graph,
 ]
 
 
@@ -713,7 +818,7 @@ def simple_foldable():
     graph = Graph()
     inp = Variable("input", shape=(1, 3), dtype=np.float32)
     c = graph.add(weights, weights, name="c")
-    out = graph.add(inp, c)
+    out = graph.add(inp, c, name="out")
 
     graph.inputs = [inp]
     graph.outputs = [out]
@@ -1017,7 +1122,7 @@ class TestFoldConstants(object):
         assert isinstance(graph.outputs[0], Constant)
         assert np.all(graph.outputs[0].values == inp.shape[1:3:2])
 
-    def test_with_nested_graph(self):
+    def test_with_variable_conditional(self):
         cond = gs.Variable("cond", dtype=np.bool, shape=(1,))
 
         X = gs.Variable("X", dtype=np.float32, shape=(1,))
@@ -1042,6 +1147,44 @@ class TestFoldConstants(object):
         assert isinstance(else_graph.nodes[0].inputs[1], Constant)
         assert np.all(else_graph.nodes[0].inputs[1].values == (Y.values * 2))
 
+    @pytest.mark.parametrize("cond_value", [True, False])
+    @pytest.mark.parametrize("flatten", [True, False])
+    def test_flatten_static_conditional(self, flatten, cond_value):
+        cond = gs.Constant("cond", values=np.array([cond_value], dtype=np.bool))
+
+        X = gs.Variable("X", dtype=np.float32, shape=(1,))
+        Y = gs.Variable("Y", dtype=np.float32, shape=(1,))
+        graph = Graph(inputs=[X, cond])
+
+        then_graph = Graph(name="Then")
+        then_graph.outputs = [then_graph.relu(then_graph.add(Y, Y))]
+
+        else_graph = Graph(name="Else")
+        else_graph.outputs = [else_graph.add(X, else_graph.add(Y, Y))]
+
+        if_out = graph.if_op(cond, then_graph, else_graph)
+        graph.outputs = [if_out]
+
+        graph.fold_constants(flatten_subgraphs=flatten)
+        graph.cleanup()
+
+        if flatten:
+            assert len(graph.nodes) == 2
+            assert graph.nodes[0].op == "Add"
+            assert graph.nodes[1].op == "Relu" if cond_value else "Add"
+
+            subgraph = then_graph if cond_value else else_graph
+            # Make sure subgraph intermediate tensors are renamed
+            assert graph.nodes[0].outputs[0].name == "add_out_0_subg_0_{:}".format(subgraph.name)
+            assert graph.outputs[0].inputs[0] == subgraph.nodes[-1]
+            assert subgraph.nodes[-1] == graph.nodes[-1]
+        else:
+            assert len(graph.nodes) == 1
+            assert len(graph.nodes) == 1
+            assert graph.nodes[0].op == "If"
+            assert graph.outputs[0].inputs[0] == graph.nodes[-1]
+        assert graph.outputs == [if_out]
+
     def test_const_inp_but_non_foldable_nested_graph(self):
         cond = gs.Constant("cond", values=np.array(True))
         X = gs.Variable("X", dtype=np.float32, shape=(1,))
@@ -1060,7 +1203,7 @@ class TestFoldConstants(object):
 
         # This should not raise because the `If` node should be excluded from
         # constant folding.
-        graph.fold_constants(error_ok=False).cleanup()
+        graph.fold_constants(error_ok=False, flatten_subgraphs=False).cleanup()
 
         assert graph.nodes[0].op == "If"
         assert len(then_graph.nodes) == 1
@@ -1068,13 +1211,248 @@ class TestFoldConstants(object):
 
     def test_cast_elision(self):
         graph = gs.import_onnx(shape_cast_elision().load())
-        new_graph = graph.fold_constants()
-        no_casts = True
+        graph.fold_constants().cleanup()
+        assert not any(node.op == "Cast" for node in graph.nodes)
 
-        for node in new_graph.nodes:
-            no_casts &= node.op != "Cast"
+    def test_cast_elision_int64(self):
+        X = gs.Variable("X", dtype=np.int64, shape=(1,))
+        graph = Graph(inputs=[X])
+        casted_x = graph.cast(X, to=onnx.TensorProto.DataType.FLOAT)
+        add_out = graph.add(casted_x, casted_x)
+        graph.outputs = [graph.cast(add_out, to=onnx.TensorProto.DataType.INT64)]
 
-        assert no_casts
+        graph.fold_constants().cleanup()
+        assert graph.nodes[0].op == "Add"
+
+    # Make sure we're lowering constant nodes before running cast elision
+    def test_cast_elision_with_constant_node(self):
+        inp = gs.Variable("inp", dtype=np.int64, shape=(1,))
+        graph = Graph(inputs=[inp])
+
+        casted_inp = graph.cast(inp, to=onnx.TensorProto.DataType.FLOAT)
+        add_out = graph.add(casted_inp, graph.constant(np.array([2], dtype=np.float32)))
+
+        casted_out = graph.cast(add_out, to=onnx.TensorProto.DataType.INT64)
+        casted_out.dtype = np.int64
+
+        graph.outputs = [casted_out]
+
+        graph.fold_constants().cleanup()
+        assert [node.op for node in graph.nodes] == ["Add"]
+
+        add_const_inp = graph.nodes[0].inputs[1]
+        assert isinstance(add_const_inp, Constant)
+        assert add_const_inp.dtype == np.int64  # Should have been casted to match dtype of other inputs.
+
+    # For a graph like:
+    #
+    #     inp
+    #      |
+    #    Cast
+    #      |
+    #    Add
+    #     |
+    #    Cast
+    #     |
+    #    out
+    #
+    # 1. We cannot remove the initial `Cast` if it is used outside the `Add` node
+    # 2. We cannot perform cast elision at all if the original output of the `Add` node is
+    #    used outside the subsequent `Cast` node.
+    #
+    @pytest.mark.parametrize("use_as_graph_output", [True, False], ids=["graph", ""])
+    @pytest.mark.parametrize("use_in_other_node", [True, False], ids=["node", ""])
+    # Whether to apply the effects of the first two parameters to the input `Cast` node or to the `Add` node.
+    @pytest.mark.parametrize("apply_to_input_cast", [True, False], ids=["input", "output"])
+    def test_cast_elision_multi_use_cast(self, use_as_graph_output, use_in_other_node, apply_to_input_cast):
+        X = gs.Variable("X", dtype=np.int32, shape=(1,))
+        graph = Graph(inputs=[X])
+        casted_x = graph.cast(X, to=onnx.TensorProto.DataType.FLOAT)
+        add_out = graph.add(casted_x, casted_x)
+        uncasted_x = graph.cast(add_out, to=onnx.TensorProto.DataType.INT32)
+
+        graph.outputs = [uncasted_x]
+
+        mutli_use_tensor = casted_x if apply_to_input_cast else add_out
+        if use_in_other_node:
+            graph.outputs.append(graph.identity(mutli_use_tensor))
+
+        if use_as_graph_output:
+            graph.outputs.append(mutli_use_tensor)
+
+        print(graph)
+        graph.fold_constants().cleanup()
+        ops = [node.op for node in graph.nodes]
+        if use_as_graph_output or use_in_other_node:
+            if apply_to_input_cast:
+                assert graph.nodes[1].inputs[0] == X
+                assert graph.nodes[1].outputs[0] == uncasted_x
+                assert ops == ["Cast", "Add"] + (["Identity"] if use_in_other_node else [])
+            else:
+                assert ops == ["Cast", "Add", "Cast"] + (["Identity"] if use_in_other_node else [])
+        else:
+            assert ops == ["Add"]
+
+    @pytest.mark.parametrize(
+        # If layer1_num_bytes is larger than layer0_num_bytes, then it must be a multiple.
+        "size_threshold, layer0_num_bytes, layer0_should_fold, layer1_num_bytes, layer1_should_fold",
+        [
+            # No size threshold - everything should fold.
+            (
+                None,
+                2,
+                True,
+                4,
+                True,
+            ),
+            # Monotonically increasing but under size threshold - everything should fold.
+            (
+                8,
+                2,
+                True,
+                4,
+                True,
+            ),
+            # Increasing then decreasing, but under size threshold - everything should fold.
+            (
+                8,
+                2,
+                True,
+                1,
+                True,
+            ),
+            # All tensors over size threshold - nothing should fold.
+            (
+                1,
+                2,
+                False,
+                4,
+                False,
+            ),
+            # Second tensor over size threshold - only first tensor should fold.
+            (
+                3,
+                2,
+                True,
+                4,
+                False,
+            ),
+            # First tensor over size threshold - second tensor should still fold.
+            (
+                3,
+                4,
+                False,
+                2,
+                True,
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("push_into_subgraph", [True, False], ids=["subgraph", ""])
+    def test_folding_size_threshold(
+        self,
+        size_threshold,
+        layer0_num_bytes,
+        layer0_should_fold,
+        layer1_num_bytes,
+        layer1_should_fold,
+        push_into_subgraph,
+    ):
+        graph = Graph()
+
+        shape = (1,)
+
+        layer0_repeats = layer0_num_bytes // misc.volume(shape)
+        layer0 = graph.tile(np.ones(shape, dtype=np.int8), repeats=[layer0_repeats])
+        layer0.inputs[0].name = "Layer0"
+
+        if layer1_num_bytes > layer0_num_bytes:
+            layer1_repeats = layer1_num_bytes // layer0_num_bytes
+            layer1 = graph.tile(layer0, repeats=[layer1_repeats])
+        else:
+            layer1 = graph.slice(layer0, starts=[0], ends=[layer1_num_bytes])
+        layer1.inputs[0].name = "Layer1"
+
+        graph.outputs = [layer1]
+
+        # Make sure size_threshold option is propagated into subgraphs.
+        if push_into_subgraph:
+            cond = gs.Variable("cond", dtype=np.bool, shape=tuple())
+            outer_graph = Graph(inputs=[cond])
+            outer_graph.if_op(cond, then_graph=graph, else_graph=graph)
+
+            outer_graph.fold_constants(size_threshold=size_threshold)
+        else:
+            graph.fold_constants(size_threshold=size_threshold)
+
+        # When a tensor is folded, it is disconnected from its producer nodes
+        assert len(graph.nodes[0].outputs) == (0 if layer0_should_fold else 1)
+        assert len(graph.nodes[1].outputs) == (0 if layer1_should_fold else 1)
+
+    @pytest.mark.parametrize("op", ["Q", "DQ"])
+    @pytest.mark.parametrize("add_intermediate_layer", [True, False])
+    def test_no_fold_qdq(self, op, add_intermediate_layer):
+        dtype = np.float32 if op == "Q" else np.int8
+        inp = gs.Constant("input", np.ones(shape=(1, 3, 5, 5), dtype=dtype))
+        graph = Graph(inputs=[inp], opset=13)
+
+        if add_intermediate_layer:
+            inp = graph.identity(inp)
+
+        qdq_func = graph.quantize_linear if op == "Q" else graph.dequantize_linear
+        graph.outputs = [qdq_func(inp, 1.2, np.array(0, dtype=np.int8))]  # Arbitrary scale and zero-point
+
+        graph.fold_constants().cleanup()
+        assert len(graph.nodes) == 1
+        assert graph.nodes[0].op == "QuantizeLinear" if op == "Q" else "DequantizeLinear"
+
+    @pytest.mark.parametrize(
+        "should_exclude_node_func,expected_node_names",
+        [
+            (
+                lambda node: True,
+                [
+                    "onnx_graphsurgeon_node_1",
+                    "onnx_graphsurgeon_node_3",
+                    "onnx_graphsurgeon_node_5",
+                    "onnx_graphsurgeon_node_7",
+                ],
+            ),
+            (
+                lambda node: node.name == "onnx_graphsurgeon_node_5",
+                ["onnx_graphsurgeon_node_5", "onnx_graphsurgeon_node_7"],
+            ),
+            (
+                lambda node: node.op == "Add",
+                [
+                    "onnx_graphsurgeon_node_1",
+                    "onnx_graphsurgeon_node_3",
+                    "onnx_graphsurgeon_node_5",
+                    "onnx_graphsurgeon_node_7",
+                ],
+            ),
+            (
+                lambda node: node.op == "Relu",
+                [
+                    "onnx_graphsurgeon_node_3",
+                    "onnx_graphsurgeon_node_5",
+                    "onnx_graphsurgeon_node_7",
+                ],
+            ),
+        ],
+    )
+    def test_custom_should_exclude_node(self, should_exclude_node_func, expected_node_names):
+        inp = gs.Constant("input", np.ones(shape=(1, 3, 5, 5), dtype=np.float32))
+        graph = Graph(inputs=[inp])
+
+        add_0 = graph.add(inp, inp)  # onnx_graphsurgeon_node_1 -> add_out_0
+        relu_0 = graph.relu(add_0)  # onnx_graphsurgeon_node_3 -> relu_out_2
+        add_1 = graph.add(relu_0, relu_0)  # onnx_graphsurgeon_node_5 -> add_out_4
+        relu_1 = graph.relu(add_1)  # onnx_graphsurgeon_node_7 -> relu_out_6
+
+        graph.outputs = [relu_1]
+
+        graph.fold_constants(should_exclude_node=should_exclude_node_func).cleanup()
+        assert [node.name for node in graph.nodes] == expected_node_names
 
 
 class TestIO(object):

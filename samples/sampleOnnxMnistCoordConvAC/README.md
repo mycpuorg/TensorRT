@@ -62,11 +62,6 @@ if (!parser->parseFromFile(model_file, static_cast<int>(sample::gLogger.getRepor
 }
 ```
 
-To view additional information about the network, including layer information and individual layer dimensions, issue the following call:
-```
-parser->reportParsingInfo();
-```
-
 After the TensorRT network is constructed by parsing the model, the TensorRT engine can be built to run inference.
 
 ### Building the engine
@@ -106,8 +101,11 @@ The Activation layer implements element-wise activation functions. Specifically,
 [Convolution layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#convolution-layer)
 The Convolution layer computes a 2D (channel, height, and width) convolution, with or without bias.
 
-[FullyConnected layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#fullyconnected-layer)
-The FullyConnected layer implements a matrix-vector product, with or without bias.
+[MatrixMultiplyLayer](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#matrixmultiply-layer)
+The MatrixMultiply layer implements a matrix multiplication.
+(The [FullyConnected layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#fullyconnected-layer) is deprecated since 8.4.
+The bias of a FullyConnected layer can be added with an
+[ElementwiseLayer](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#elementwise-layer) of `SUM` operation.)
 
 [Pooling layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#pooling-layer)
 The Pooling layer implements pooling within a channel. Supported pooling types are `maximum`, `average` and `maximum-average blend`.
@@ -122,24 +120,25 @@ The Shuffle layer implements a reshape and transpose operator for tensors.
 
 ## Running the sample
 
-1.  Compile this sample by running `make` in the `<TensorRT root directory>/samples/sampleOnnxMnistCoordConvAC` directory. The binary named `sample_onnx_mnist_coord_conv_ac` will be created in the `<TensorRT root directory>/bin` directory.
-	```
-	cd <TensorRT root directory>/samples/sampleOnnxMnistCoordConvAC
-	make
-	```
+1. The sample gets compiled when building the TensorRT OSS following the [instructions](https://github.com/NVIDIA/TensorRT). The binary named sample_onnx_mnist_coord_conv_ac will be created in the output directory.
 
-	Where `<TensorRT root directory>` is where you installed TensorRT.
+2. (Optional) If the ONNX model on MNIST dataset is not available, you can generate an ONNX model for running this sample using the following commands:
+    ```
+    python3 mnist_coord_conv_train.py --save-onnx
+    python3 modify_onnx_ac.py
+    ``` 
+    The first line trains a model for the MNIST dataset and saves it as an ONNX model. The second line modifies the ONNX model structure to make it work with TensorRT for building the MNIST engine. Please use torch 1.10.2 to run these scripts.
 
-2.  Run the sample to build and run the MNIST engine from the ONNX model.
-	```
-	./sample_onnx_mnist_coord_conv_ac [-h or --help] [-d or --datadir=<path to data directory>] [--useDLACore=<int>] [--int8 or --fp16]
-	```
+3.  Run the sample to build and run the MNIST engine from the ONNX model.
+    ```
+    ./sample_onnx_mnist_coord_conv_ac [-h or --help] [-d or --datadir=<path to data directory>] [--useDLACore=<int>] [--int8 or --fp16]
+    ```
 
-3.  Verify that the sample ran successfully. If the sample runs successfully you should see output similar to the following:
-	```
-	&&&& RUNNING TensorRT.sample_coord_conv_ac_onnx_mnist # ./sample_onnx_mnist_coord_conv_ac
-	----------------------------------------------------------------
-	Input filename:   data/mnist/mnist_with_coordconv.onnx
+4. Verify that the sample ran successfully. If the sample runs successfully you should see output similar to the following:
+    ```
+    &&&& RUNNING TensorRT.sample_coord_conv_ac_onnx_mnist # ./sample_onnx_mnist_coord_conv_ac
+    ----------------------------------------------------------------
+    Input filename:   data/mnist/mnist_with_coordconv.onnx
     ONNX IR version:  0.0.6
     Opset version:    11
     Producer name:

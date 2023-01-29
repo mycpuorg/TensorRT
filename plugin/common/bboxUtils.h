@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,10 +17,7 @@
 #ifndef TRT_BBOX_UTILS_H
 #define TRT_BBOX_UTILS_H
 
-#include "plugin.h"
-
-using namespace nvinfer1;
-using namespace nvinfer1::plugin;
+#include "common/plugin.h"
 
 template <typename T>
 struct Bbox
@@ -69,7 +67,7 @@ int8_t* alignPtr(int8_t* ptr, uintptr_t to);
 
 int8_t* nextWorkspacePtr(int8_t* ptr, uintptr_t previousWorkspaceSize);
 
-size_t dataTypeSize(DataType dtype);
+size_t dataTypeSize(nvinfer1::DataType dtype);
 
 void setUniformOffsets(cudaStream_t stream, int num_segments, int offset, int* d_offsets);
 

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,10 +15,9 @@
  * limitations under the License.
  */
 
-#include "checkMacrosPlugin.h"
+#include "common/checkMacrosPlugin.h"
 #include "zeroPadding2d.h"
 #include <array>
-#include <cassert>
 #include <cstring>
 
 using namespace nvinfer1;
@@ -129,14 +129,14 @@ cudaError_t zeroPadding2d(
     dpitch >>= kernelId;
 
     int32_t devId;
-    CHECK_CUDA(cudaGetDevice(&devId));
+    PLUGIN_CHECK_CUDA(cudaGetDevice(&devId));
     int32_t numSms;
-    CHECK_CUDA(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, devId));
+    PLUGIN_CHECK_CUDA(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, devId));
     auto kernel = kernels[kernelId];
     int32_t block = kMAX_THREADS_PER_BLOCK;
     int32_t grid = (dpitch * height + kMAX_THREADS_PER_BLOCK - 1) / kMAX_THREADS_PER_BLOCK;
     int32_t blocksPerSm;
-    CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, block, 0));
+    PLUGIN_CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, block, 0));
     grid = std::min(numSms * blocksPerSm, grid);
 
     kernel<<<grid, block, 0, stream>>>(src, spitch, dst, dpitch, height);
@@ -145,10 +145,10 @@ cudaError_t zeroPadding2d(
 
 QkvPaddingRunner::QkvPaddingRunner(int32_t headSize, DataType dtype)
 {
-    ASSERT(headSize > 0 && headSize <= 64);
+    PLUGIN_ASSERT(headSize > 0 && headSize <= 64);
     mPaddingHeadSize = (headSize <= 32) ? 32 : 64;
 
-    ASSERT(dtype == DataType::kHALF || dtype == DataType::kINT8);
+    PLUGIN_ASSERT(dtype == DataType::kHALF || dtype == DataType::kINT8);
     mDtypeSize = (dtype == DataType::kHALF) ? 2 : 1;
 }
 

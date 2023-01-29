@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -116,7 +117,7 @@ private:
 //! \details This function creates the SSD network by parsing the caffe model and builds
 //!          the engine that will be used to run SSD (mEngine)
 //!
-//! \return Returns true if the engine was created successfully and false otherwise
+//! \return true if the engine was created successfully and false otherwise
 //!
 bool SampleSSD::build()
 {
@@ -181,7 +182,6 @@ bool SampleSSD::constructNetwork(SampleUniquePtr<nvinfer1::IBuilder>& builder,
     }
 
     builder->setMaxBatchSize(mParams.batchSize);
-    config->setMaxWorkspaceSize(36_MiB);
     if (mParams.fp16)
     {
         config->setFlag(BuilderFlag::kFP16);
@@ -394,14 +394,14 @@ bool SampleSSD::verifyOutput(const samplesCommon::BufferManager& buffers)
 SampleSSDParams initializeSampleParams(const samplesCommon::Args& args)
 {
     SampleSSDParams params;
-    if (args.dataDirs.empty()) //!< Use default directories if user hasn't provided directory paths
+    if (args.dataDirs.empty()) // Use default directories if user hasn't provided directory paths
     {
         params.dataDirs.push_back("data/ssd/");
         params.dataDirs.push_back("data/samples/ssd/");
         params.dataDirs.push_back("data/int8_samples/ssd/");
         params.dataDirs.push_back("int8/ssd/");
     }
-    else //!< Use the data directory provided by the user
+    else // Use the data directory provided by the user
     {
         params.dataDirs = args.dataDirs;
     }

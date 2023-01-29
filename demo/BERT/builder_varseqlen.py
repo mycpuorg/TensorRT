@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -40,9 +41,12 @@ TensorRT Initialization
 TRT_LOGGER = trt.Logger(trt.Logger.INFO)
 trt_version = [int(n) for n in trt.__version__.split('.')]
 
-handle = ctypes.CDLL("libnvinfer_plugin.so", mode=ctypes.RTLD_GLOBAL)
+# Import necessary plugins for demoBERT
+plugin_lib_name = "nvinfer_plugin.dll" if sys.platform == "win32" else "libnvinfer_plugin.so"
+env_name_to_add_path = "PATH" if sys.platform == "win32" else "LD_LIBRARY_PATH"
+handle = ctypes.CDLL(plugin_lib_name, mode=ctypes.RTLD_GLOBAL)
 if not handle:
-    raise RuntimeError("Could not load plugin library. Is `libnvinfer_plugin.so` on your LD_LIBRARY_PATH?")
+    raise RuntimeError("Could not load plugin library. Is `{}` on your {}?".format(plugin_lib_name, env_name_to_add_path))
 
 trt.init_libnvinfer_plugins(TRT_LOGGER, "")
 plg_registry = trt.get_plugin_registry()
@@ -348,21 +352,22 @@ def squad_output(prefix, config, init_dict, network, input_tensor):
     set_output_name(OUT, prefix, "squad_logits")
     return OUT
 
-def emb_layernorm(builder, network, config, weights_dict, builder_config, max_sequence_length, max_batch_size):
+def emb_layernorm(builder, network, config, weights_dict, builder_config, max_sequence_length, batch_sizes):
     input_ids = network.add_input(name="input_ids", dtype=trt.int32, shape=(-1,))
     segment_ids = network.add_input(name="segment_ids", dtype=trt.int32, shape=(-1,))
     cu_seqlens = network.add_input(name="cu_seqlens", dtype=trt.int32, shape=(-1,))
     max_seqlen = network.add_input(name="max_seqlen", dtype=trt.int32, shape=(-1,))
 
-    # Specify profiles
-    profile = builder.create_optimization_profile()
-    min_shape = (1,)
-    shape = (max_sequence_length*max_batch_size,)
-    profile.set_shape("input_ids", min=min_shape, opt=shape, max=shape)
-    profile.set_shape("segment_ids", min=min_shape, opt=shape, max=shape)
-    profile.set_shape("cu_seqlens", min=min_shape, opt=(max_batch_size+1,), max=(max_batch_size+1,))
-    profile.set_shape("max_seqlen", min=min_shape, opt=(max_sequence_length,), max=(max_sequence_length,))
-    builder_config.add_optimization_profile(profile)
+    for batch_size in batch_sizes:
+        # Specify profiles
+        profile = builder.create_optimization_profile()
+        min_shape = (1,)
+        shape = (max_sequence_length*batch_size,)
+        profile.set_shape("input_ids", min=min_shape, opt=shape, max=shape)
+        profile.set_shape("segment_ids", min=min_shape, opt=shape, max=shape)
+        profile.set_shape("cu_seqlens", min=min_shape, opt=(batch_size+1,), max=(batch_size+1,))
+        profile.set_shape("max_seqlen", min=min_shape, opt=(max_sequence_length,), max=(max_sequence_length,))
+        builder_config.add_optimization_profile(profile)
 
     wbeta = trt.PluginField("bert_embeddings_layernorm_beta", weights_dict["bert_embeddings_layernorm_beta"].numpy(), trt.PluginFieldType.FLOAT32)
     wgamma = trt.PluginField("bert_embeddings_layernorm_gamma", weights_dict["bert_embeddings_layernorm_gamma"].numpy(), trt.PluginFieldType.FLOAT32)
@@ -388,11 +393,12 @@ def emb_layernorm(builder, network, config, weights_dict, builder_config, max_se
     set_output_name(emb_layer, "embeddings_", "output")
     return emb_layer, cu_seqlens, max_seqlen
 
-def build_engine(batch_size, workspace_size, sequence_length, config, weights_dict, squad_json, vocab_file, calibrationCacheFile, calib_num):
+def build_engine(batch_sizes, workspace_size, sequence_length, config, weights_dict, squad_json, vocab_file, calibrationCacheFile, calib_num, verbose):
     explicit_batch_flag = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
 
     with trt.Builder(TRT_LOGGER) as builder, builder.create_network(explicit_batch_flag) as network, builder.create_builder_config() as builder_config:
         builder_config.max_workspace_size = workspace_size * (1024 * 1024)
+        builder_config.avg_timing_iterations = 8
         if config.use_fp16:
             builder_config.set_flag(trt.BuilderFlag.FP16)
         if config.use_int8:
@@ -400,11 +406,14 @@ def build_engine(batch_size, workspace_size, sequence_length, config, weights_di
             if not config.use_qat:
                 raise RuntimeError("Post training calibration is not supported in variable-length BERT.")
 
+        if verbose:
+            builder_config.profiling_verbosity = trt.ProfilingVerbosity.DETAILED
+
         # speed up the engine build for trt major version >= 8 
         # 1. disable cudnn tactic
         # 2. load global timing cache
         if trt_version[0] >= 8:
-            tactic_source = 1 << int(trt.TacticSource.CUBLAS) | 1 << int(trt.TacticSource.CUBLAS_LT)
+            tactic_source = builder_config.get_tactic_sources() & ~(1 << int(trt.TacticSource.CUDNN))
             builder_config.set_tactic_sources(tactic_source)
             if config.timing_cache != None:
                 if os.path.exists(config.timing_cache):
@@ -420,7 +429,7 @@ def build_engine(batch_size, workspace_size, sequence_length, config, weights_di
             builder_config.set_flag(trt.BuilderFlag.SPARSE_WEIGHTS)
 
         # Create the network
-        emb_layer, cu_seqlens, max_seqlen = emb_layernorm(builder, network, config, weights_dict, builder_config, sequence_length, batch_size)
+        emb_layer, cu_seqlens, max_seqlen = emb_layernorm(builder, network, config, weights_dict, builder_config, sequence_length, batch_sizes)
         embeddings = emb_layer.get_output(0)
         if config.use_int8 and config.interleaved:
             shuffle = network.add_shuffle(embeddings)
@@ -468,13 +477,13 @@ def main():
     parser.add_argument("-pt", "--pytorch", required=False, help="The PyTorch checkpoint file path.")
     parser.add_argument("-pkl", "--pickle", required=False, help="The Pickle weights dictionary file path for the Megatron variant of BERT.")
     parser.add_argument("-o", "--output", required=True, default="bert_base_384.engine", help="The bert engine file, ex bert.engine")
-    parser.add_argument("-b", "--max-batch-size", default=1, help="Max batch size. The engine will be usable with any input with (batch-size * sequence-length) below (max-batch-size * max-sequence-length).", type=int)
+    parser.add_argument("-b", "--max-batch-size", default=[], action="append", help="Max batch size. The engine will be usable with any input with (batch-size * sequence-length) below (max-batch-size * max-sequence-length). Can be specified multiple times to build optimization profiles for more than one batch size.", type=int)
     parser.add_argument("-s", "--max-sequence-length", default=128, help="Max sequence length of the BERT model. The engine will be usable with any input with (batch-size * sequence-length) below (max-batch-size * max-sequence-length).", type=int)
     parser.add_argument("-c", "--config-dir", required=True,
                         help="The folder containing the bert_config.json, which can be downloaded e.g. from https://github.com/google-research/bert#pre-trained-models or by running download_models.py in dle/TensorFlow/LanguageModeling/BERT/data/pretrained_models_google")
     parser.add_argument("-f", "--fp16", action="store_true", help="Indicates that inference should be run in FP16 precision", required=False)
     parser.add_argument("-i", "--int8", action="store_true", help="Indicates that inference should be run in INT8 precision", required=False)
-    parser.add_argument("-w", "--workspace-size", default=1000, help="Workspace size in MiB for building the BERT engine", type=int)
+    parser.add_argument("-w", "--workspace-size", default=1200, help="Workspace size in MiB for building the BERT engine", type=int)
     parser.add_argument("-j", "--squad-json", default="squad/dev-v1.1.json", help="squad json dataset used for int8 calibration", required=False)
     parser.add_argument("-v", "--vocab-file", default="./pre-trained_model/uncased_L-24_H-1024_A-16/vocab.txt", help="Path to file containing entire understandable vocab", required=False)
     parser.add_argument("-n", "--calib-num", default=100, help="calibration batch numbers", type=int)
@@ -483,8 +492,13 @@ def main():
     parser.add_argument("-tcf", "--timing-cache-file", help="Path to tensorrt build timeing cache file, only available for tensorrt 8.0 and later", required=False)
     parser.add_argument("-sp", "--sparse", action="store_true", help="Indicates that model is sparse", required=False)
     parser.add_argument("--megatron", action="store_true", help="Indicates that model is the Megatron-style architecture", required=False)
+    parser.add_argument("--verbose", action="store_true", help="Turn on verbose logger and set profiling verbosity to verbose", required=False)
 
     args, _ = parser.parse_known_args()
+    args.max_batch_size = args.max_batch_size or [1]
+
+    if args.verbose:
+        TRT_LOGGER.min_severity = TRT_LOGGER.VERBOSE
 
     cc = pycuda.autoinit.device.compute_capability()
     if cc[0] * 10 + cc[1] < 72:
@@ -519,7 +533,7 @@ def main():
                            "PyTorch using option --pytorch, or Pickle weight dictionary using option --pickle "
                            "to build TRT BERT model.")
 
-    with build_engine(args.max_batch_size, args.workspace_size, args.max_sequence_length, config, weights_dict, args.squad_json, args.vocab_file, calib_cache, args.calib_num) as engine:
+    with build_engine(args.max_batch_size, args.workspace_size, args.max_sequence_length, config, weights_dict, args.squad_json, args.vocab_file, calib_cache, args.calib_num, args.verbose) as engine:
         TRT_LOGGER.log(TRT_LOGGER.VERBOSE, "Serializing Engine...")
         serialized_engine = engine.serialize()
         TRT_LOGGER.log(TRT_LOGGER.INFO, "Saving Engine to {:}".format(args.output))

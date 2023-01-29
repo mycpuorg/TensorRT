@@ -41,7 +41,13 @@ The following parameters were used to create `generateDetection` instance:
 |`int`               |`keep_topk`                         |Number of detections will be kept after NMS.  
 |`float`             |`score_threshold`                   |Confidence threshold value. This plugin will drop a detection if its class confidence(score) is under "score_threshold". 
 |`float`             |`iou_threshold`                     |IOU threshold value used in NMS.
+|`int[3]`            |`image_size`                        |Input image size in CHW. Defaults to [3,832,1344]
 
+## Limitations
+
+The number of anchors is capped at 2048 to support embedded devices with smaller shared memory capacity.
+
+To enable support for a device with higher memory, calls to `sortPerClass` and `KeepTopKGather` can be modified in `DetectionPostProcess` ([maskRCNNKernels.cu](https://github.com/NVIDIA/TensorRT/blob/main/plugin/common/kernels/maskRCNNKernels.cu)).
 
 ## Additional resources
 
@@ -55,8 +61,9 @@ documentation.
 
 ## Changelog
 
-June 2020
-This is the first release of this `README.md` file.
+January 2022: The [Limitations](#limitations) section was added to this `README.md` file to document limitations of the plugin related to the maximum number of anchors it can support. 
+
+June 2020: First release of this `README.md` file.
 
 
 ## Known issues

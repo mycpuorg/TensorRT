@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,12 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <array>
-#include "plugin.h"
-#include "kernel.h"
+#include "common/kernel.h"
+#include "common/plugin.h"
 #include "cuda_fp16.h"
+#include <array>
 
-inline __device__ __half minus_fb(const __half & a, const __half & b) {
+using namespace nvinfer1;
+
+inline __device__ __half minus_fb(const __half& a, const __half& b)
+{
 #if __CUDA_ARCH__ >= 530
     return a - b;
 #else
@@ -90,13 +94,13 @@ __launch_bounds__(nthds_per_cta)
             const T_BBOX xMax = bboxData[bboxId + 2];
             const T_BBOX yMax = bboxData[bboxId + 3];
             // clipped bbox xmin
-            topDetections[i * 7 + 3] = saturate(xMin);
+            topDetections[i * 7 + 3] = __saturatef(xMin);
             // clipped bbox ymin
-            topDetections[i * 7 + 4] = saturate(yMin);
+            topDetections[i * 7 + 4] = __saturatef(yMin);
             // clipped bbox xmax
-            topDetections[i * 7 + 5] = saturate(xMax);
+            topDetections[i * 7 + 5] = __saturatef(xMax);
             // clipped bbox ymax
-            topDetections[i * 7 + 6] = saturate(yMax);
+            topDetections[i * 7 + 6] = __saturatef(yMax);
             // Atomic add to increase the count of valid keepTopK bounding boxes
             // Without having to do manual sync.
             atomicAdd(&keepCount[i / keepTopK], 1);
@@ -121,7 +125,7 @@ pluginStatus_t gatherTopDetections_gpu(
     const float score_shift
 )
 {
-    cudaMemsetAsync(keepCount, 0, numImages * sizeof(int), stream);
+    CSC(cudaMemsetAsync(keepCount, 0, numImages * sizeof(int), stream), STATUS_FAILURE);
     const int BS = 32;
     const int GS = 32;
     gatherTopDetections_kernel<T_BBOX, T_SCORE, BS><<<GS, BS, 0, stream>>>(shareLocation, numImages, numPredsPerClass,
@@ -157,6 +161,7 @@ struct gtdLaunchConfig
     gtdLaunchConfig(DataType t_bbox, DataType t_score)
         : t_bbox(t_bbox)
         , t_score(t_score)
+        , function(nullptr)
     {
     }
     gtdLaunchConfig(DataType t_bbox, DataType t_score, gtdFunc function)

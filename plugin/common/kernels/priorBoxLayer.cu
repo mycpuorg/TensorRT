@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,24 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "kernel.h"
+#include "NvInferPluginUtils.h"
+#include "common/kernel.h"
 #include "reducedMathPlugin.h"
 #include <iostream>
 
+using namespace nvinfer1;
+using namespace nvinfer1::plugin;
 using nvinfer1::plugin::ReducedDivisor;
 
 template <unsigned nthdsPerCTA>
-__launch_bounds__(nthdsPerCTA)
-    __global__ void priorBoxKernel(
-        PriorBoxParameters param,
-        const int H,
-        const int W,
-        const int numPriors,
-        const int numAspectRatios,
-        const float* minSize,
-        const float* maxSize,
-        const float* aspectRatios,
-        float* outputData)
+__launch_bounds__(nthdsPerCTA) __global__ void priorBoxKernel(PriorBoxParameters param, const int H, const int W,
+    const int numPriors, const int numAspectRatios, const float* minSize, const float* maxSize,
+    const float* aspectRatios, float* outputData)
 {
     // output dims: (H, W, param.numMinSize, (1+haveMaxSize+numAR-1), 4)
     const int dim = H * W * numPriors;
@@ -175,22 +171,13 @@ pluginStatus_t priorBoxGpu(
     }
 }
 
-pluginStatus_t priorBoxInference(
-    cudaStream_t stream,
-    const PriorBoxParameters param,
-    const int H,
-    const int W,
-    const int numPriors,
-    const int numAspectRatios,
-    const void* minSize,
-    const void* maxSize,
-    const void* aspectRatios,
+pluginStatus_t priorBoxInference(cudaStream_t stream, const PriorBoxParameters param, const int H, const int W,
+    const int numPriors, const int numAspectRatios, const void* minSize, const void* maxSize, const void* aspectRatios,
     void* outputData)
 {
-    ASSERT(param.numMaxSize >= 0);
+    PLUGIN_ASSERT(param.numMaxSize >= 0);
     if (param.numMaxSize)
-        return priorBoxGpu(stream, param, H, W, numPriors, numAspectRatios,
-                           minSize, maxSize, aspectRatios, outputData);
+        return priorBoxGpu(stream, param, H, W, numPriors, numAspectRatios, minSize, maxSize, aspectRatios, outputData);
     else
         return priorBoxGpu(stream, param, H, W, numPriors, numAspectRatios,
                            minSize, nullptr, aspectRatios, outputData);
@@ -200,22 +187,13 @@ namespace nvinfer1
 {
 namespace plugin
 {
-pluginStatus_t priorBoxInference(
-    cudaStream_t stream,
-    const PriorBoxParameters param,
-    const int H,
-    const int W,
-    const int numPriors,
-    const int numAspectRatios,
-    const void* minSize,
-    const void* maxSize,
-    const void* aspectRatios,
+pluginStatus_t priorBoxInference(cudaStream_t stream, const PriorBoxParameters param, const int H, const int W,
+    const int numPriors, const int numAspectRatios, const void* minSize, const void* maxSize, const void* aspectRatios,
     void* outputData)
 {
-    ASSERT(param.numMaxSize >= 0);
+    PLUGIN_ASSERT(param.numMaxSize >= 0);
     if (param.numMaxSize)
-        return priorBoxGpu(stream, param, H, W, numPriors, numAspectRatios,
-                           minSize, maxSize, aspectRatios, outputData);
+        return priorBoxGpu(stream, param, H, W, numPriors, numAspectRatios, minSize, maxSize, aspectRatios, outputData);
     else
         return priorBoxGpu(stream, param, H, W, numPriors, numAspectRatios,
                            minSize, nullptr, aspectRatios, outputData);

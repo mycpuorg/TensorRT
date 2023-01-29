@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -35,9 +36,15 @@ NetworkResult = namedtuple(
     ["input", "output_tensor", "semantic_output", "median_runtime", "models"],
 )
 
-"""CheckpointResult(network_results: List[NetworkResult], accuracy: float)"""
+"""BenchmarkingResult(median_runtime: NetworkRuntime, models: [str])"""
+BenchmarkingResult = namedtuple(
+    "BenchmarkingResult",
+    ["median_runtime", "models"],
+)
+
+"""CheckpointResult(network_results: List[NetworkResult], accuracy: float, perplexity: float)"""
 NetworkCheckpointResult = namedtuple(
-    "NetworkCheckpointResult", ["network_results", "accuracy"]
+    "NetworkCheckpointResult", ["network_results", "accuracy", "perplexity"]
 )
 
 # Tracks TRT Precision Config
@@ -47,8 +54,8 @@ Precision = namedtuple("Precision", ["fp16"])
 """NetworkMetadata(variant: str, precision: Precision, other: Union[namedtuple, None])"""
 NetworkMetadata = namedtuple("NetworkMetadata", ["variant", "precision", "other"])
 
-"""TimingProfile(iterations: int, repeat: int)"""
-TimingProfile = namedtuple("TimingProfile", ["iterations", "number", "warmup"])
+"""TimingProfile(iterations: int, number: int, warmup: int, duration: int, percentile: int or [int])"""
+TimingProfile = namedtuple("TimingProfile", ["iterations", "number", "warmup", "duration", "percentile"])
 
 
 """NetworkModel(name: str, fpath: str)"""
@@ -85,7 +92,7 @@ class Dims:
         Return:
             str: Returns a sequence dimension which Dims.SEQUENCE appended by dim_type.
         """
-        return Dims.SEQUENCE + dim_type
+        return Dims.SEQUENCE + "_" + dim_type
 
     def get_dims(self):
         """
@@ -114,10 +121,10 @@ class Dims:
         dynamic_axes = {}
         for k, v in self.encoding.items():
             encodings = []
-            for e in v:
+            for idx, e in enumerate(v):
                 if isinstance(e, str) and (e == self.BATCH or self.SEQUENCE in e):
-                    encodings.append(e)
-            dynamic_axes[k] = {c: v for c, v in enumerate(encodings)}
+                    encodings.append((idx, e))
+            dynamic_axes[k] = {idx: e for idx, e in encodings}
 
         return dynamic_axes
 

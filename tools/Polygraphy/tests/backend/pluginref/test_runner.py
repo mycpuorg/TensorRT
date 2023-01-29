@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,13 +24,13 @@ from polygraphy.logger import G_LOGGER
 from tests.models.meta import ONNX_MODELS
 
 
-class TestLoggerCallbacks(object):
+class TestLoggerCallbacks:
     @pytest.mark.parametrize("sev", G_LOGGER.SEVERITY_LETTER_MAPPING.keys())
     def test_set_severity(self, sev):
-        G_LOGGER.severity = sev
+        G_LOGGER.module_severity = sev
 
 
-class TestPluginRefRunner(object):
+class TestPluginRefRunner:
     def test_can_name_runner(self):
         NAME = "runner"
         runner = PluginRefRunner(None, name=NAME)
@@ -51,14 +52,14 @@ class TestPluginRefRunner(object):
         model = ONNX_MODELS["and"]
         with PluginRefRunner(GsFromOnnx(OnnxFromPath(model.path))) as runner:
             with pytest.raises(PolygraphyException, match="does not have a reference implementation registered!"):
-                runner.infer({"x": np.ones(shape=(3, 4), dtype=np.bool), "y": np.ones(shape=(3, 4), dtype=np.bool)})
+                runner.infer({"x": np.ones(shape=(3, 4), dtype=bool), "y": np.ones(shape=(3, 4), dtype=bool)})
 
     @pytest.mark.parametrize(
         "names, err",
         [
-            (["fake-input", "x"], "Extra keys in"),
-            (["fake-input"], "Some keys are missing"),
-            ([], "Some keys are missing"),
+            (["fake-input", "x"], "Extra inputs in"),
+            (["fake-input"], "The following inputs were not found"),
+            ([], "The following inputs were not found"),
         ],
     )
     def test_error_on_wrong_name_feed_dict(self, names, err):

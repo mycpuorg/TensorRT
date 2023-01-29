@@ -28,7 +28,7 @@ After inference, post-processing including bounding-box clustering is applied. T
 
 For specific software versions, see the [TensorRT Installation Guide](https://docs.nvidia.com/deeplearning/sdk/tensorrt-archived/index.html).
 
-1.  Install the dependencies for Python.
+1. Install the dependencies for Python.
     ```bash
     pip3 install -r requirements.txt
     ```
@@ -112,4 +112,4 @@ This `README.md` file was recreated, updated and reviewed.
 
 # Known issues
 
-There are no known issues in this sample.
+When installing the requirements with Python 3.10, there is a known issue for building onnx. The recommendation is to use a python version < 3.10 when running the sample.

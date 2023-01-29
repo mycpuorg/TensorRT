@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,12 +18,12 @@
 #ifndef TRT_GROUP_NORM_PLUGIN_H
 #define TRT_GROUP_NORM_PLUGIN_H
 
-#include "serialize.hpp"
-#include "plugin.h"
+#include "common/plugin.h"
+#include "common/serialize.hpp"
 #include <cudnn.h>
-#include <vector>
 #include <iostream>
 #include <string>
+#include <vector>
 
 // One of the preferred ways of making TensorRT to be able to see
 // our custom layer requires extending IPluginV2 and IPluginCreator classes.
@@ -100,10 +101,18 @@ private:
     int mChannelVolume;
 
     cudnnHandle_t _cudnn_handle;
-    cudnnTensorDescriptor_t desc, bnDesc; // describes input and output
+    // Describes input and output.
+    cudnnTensorDescriptor_t desc;
+    cudnnTensorDescriptor_t bnDesc;
     // These are buffers initialized to 1 and 0 respectively
-    void* bnScale;
-    void* bnBias;
+    std::shared_ptr<CudaBind<float>> mBnScales{};
+    std::shared_ptr<CudaBind<float>> mBnBias{};
+    size_t mNbScaleBias{};
+
+    using IPluginV2::getOutputDimensions;
+    using IPluginV2::getWorkspaceSize;
+    using IPluginV2::enqueue;
+    using IPluginV2Ext::configurePlugin;
 };
 
 class GroupNormalizationPluginCreator : public IPluginCreator

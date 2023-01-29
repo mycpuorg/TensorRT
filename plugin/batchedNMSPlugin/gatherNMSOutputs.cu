@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,14 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "kernel.h"
-#include "plugin.h"
+#include "common/kernel.h"
+#include "common/plugin.h"
 #include "cuda_fp16.h"
 #include "gatherNMSOutputs.h"
 #include <array>
-
+using namespace nvinfer1;
 // __half minus with fallback to float for old sm
-inline __device__ __half minus_fb(const __half & a, const __half & b) {
+inline __device__ __half minus_fb(const __half& a, const __half& b)
+{
 #if __CUDA_ARCH__ >= 530
     return a - b;
 #else
@@ -136,7 +138,7 @@ pluginStatus_t gatherNMSOutputs_gpu(
     const float scoreShift
     )
 {
-    cudaMemsetAsync(numDetections, 0, numImages * sizeof(int), stream);
+    CSC(cudaMemsetAsync(numDetections, 0, numImages * sizeof(int), stream), STATUS_FAILURE);
     const int BS = 32;
     const int GS = 32;
     gatherNMSOutputs_kernel<T_BBOX, T_SCORE, BS><<<GS, BS, 0, stream>>>(shareLocation, numImages, numPredsPerClass,
@@ -180,6 +182,7 @@ struct nmsOutLaunchConfig
     nmsOutLaunchConfig(DataType t_bbox, DataType t_score)
         : t_bbox(t_bbox)
         , t_score(t_score)
+        , function(nullptr)
     {
     }
     nmsOutLaunchConfig(DataType t_bbox, DataType t_score, nmsOutFunc function)

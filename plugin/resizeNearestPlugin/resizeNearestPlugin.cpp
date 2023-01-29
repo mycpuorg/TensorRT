@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,9 +15,9 @@
  * limitations under the License.
  */
 #include "resizeNearestPlugin.h"
-#include "plugin.h"
-#include <cuda_runtime_api.h>
+#include "common/plugin.h"
 #include <algorithm>
+#include <cuda_runtime_api.h>
 #include <iostream>
 
 #define DEBUG 0
@@ -61,28 +62,45 @@ const PluginFieldCollection* ResizeNearestPluginCreator::getFieldNames() noexcep
 
 IPluginV2Ext* ResizeNearestPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    const PluginField* fields = fc->fields;
-    for (int i = 0; i < fc->nbFields; ++i)
+    try
     {
-        const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "scale"))
+        plugin::validateRequiredAttributesExist({"scale"}, fc);
+        const PluginField* fields = fc->fields;
+        for (int32_t i = 0; i < fc->nbFields; ++i)
         {
-            assert(fields[i].type == PluginFieldType::kFLOAT32);
-            mScale = *(static_cast<const float*>(fields[i].data));
+            char const* attrName = fields[i].name;
+            if (!strcmp(attrName, "scale"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                mScale = *(static_cast<float const*>(fields[i].data));
+            }
         }
+        return new ResizeNearest(mScale);
     }
-    return new ResizeNearest(mScale);
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 IPluginV2Ext* ResizeNearestPluginCreator::deserializePlugin(const char* name, const void* data, size_t length) noexcept
 {
-    return new ResizeNearest(data, length);
+    try
+    {
+        return new ResizeNearest(data, length);
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 ResizeNearest::ResizeNearest(float scale)
     : mScale(scale)
 {
-    assert(mScale > 0);
+    PLUGIN_VALIDATE(mScale > 0);
 }
 
 int ResizeNearest::getNbOutputs() const noexcept
@@ -92,9 +110,9 @@ int ResizeNearest::getNbOutputs() const noexcept
 
 Dims ResizeNearest::getOutputDimensions(int index, const Dims* inputDims, int nbInputs) noexcept
 {
-    assert(nbInputs == 1);
+    PLUGIN_ASSERT(nbInputs == 1);
     nvinfer1::Dims const& input = inputDims[0];
-    assert(index == 0);
+    PLUGIN_ASSERT(index == 0);
     nvinfer1::Dims output;
     output.nbDims = input.nbDims;
     for (int d = 0; d < input.nbDims; ++d)
@@ -146,7 +164,7 @@ void ResizeNearest::serialize(void* buffer) const noexcept
     write(d, mOutputDims.d[0]);
     write(d, mOutputDims.d[1]);
     write(d, mOutputDims.d[2]);
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 ResizeNearest::ResizeNearest(const void* data, size_t length)
@@ -161,7 +179,7 @@ ResizeNearest::ResizeNearest(const void* data, size_t length)
     mOutputDims.d[0] = read<int>(d);
     mOutputDims.d[1] = read<int>(d);
     mOutputDims.d[2] = read<int>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 const char* ResizeNearest::getPluginType() const noexcept
@@ -176,9 +194,17 @@ const char* ResizeNearest::getPluginVersion() const noexcept
 
 IPluginV2Ext* ResizeNearest::clone() const noexcept
 {
-    auto plugin = new ResizeNearest(*this);
-    plugin->setPluginNamespace(mNameSpace.c_str());
-    return plugin;
+    try
+    {
+        auto plugin = new ResizeNearest(*this);
+        plugin->setPluginNamespace(mNameSpace.c_str());
+        return plugin;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 void ResizeNearest::setPluginNamespace(const char* libNamespace) noexcept
@@ -220,7 +246,7 @@ int ResizeNearest::enqueue(
 DataType ResizeNearest::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
 {
     // Only 1 input and 1 output from the plugin layer
-    ASSERT(index == 0);
+    PLUGIN_ASSERT(index == 0);
 
     // Only DataType::kFLOAT is acceptable by the plugin layer
     return DataType::kFLOAT;
@@ -243,10 +269,10 @@ void ResizeNearest::configurePlugin(const Dims* inputDims, int nbInputs, const D
     const DataType* inputTypes, const DataType* outputTypes, const bool* inputIsBroadcast,
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize) noexcept
 {
-    assert(nbInputs == 1);
+    PLUGIN_ASSERT(nbInputs == 1);
     mInputDims = inputDims[0];
 
-    assert(nbOutputs == 1);
+    PLUGIN_ASSERT(nbOutputs == 1);
     mOutputDims = outputDims[0];
 }
 

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "bboxUtils.h"
+#include "common/bboxUtils.h"
 #include "cub/cub.cuh"
 #include "cuda_runtime_api.h"
 
@@ -24,6 +25,7 @@
 #define NMS_TILES 5
 
 using namespace nvinfer1;
+using namespace nvinfer1::plugin;
 
 template <typename T>
 __device__ float IOU(EfficientNMSParameters param, BoxCorner<T> box1, BoxCorner<T> box2)
@@ -543,8 +545,8 @@ cudaError_t EfficientNMSFilterLauncher(EfficientNMSParameters& param, const T* s
     if (param.scoreThreshold < kernelSelectThreshold)
     {
         // A full copy of the buffer is necessary because sorting will scramble the input data otherwise.
-        cudaMemcpyAsync(topScoresData, scoresInput, param.batchSize * param.numScoreElements * sizeof(T),
-            cudaMemcpyDeviceToDevice, stream);
+        PLUGIN_CHECK_CUDA(cudaMemcpyAsync(topScoresData, scoresInput,
+            param.batchSize * param.numScoreElements * sizeof(T), cudaMemcpyDeviceToDevice, stream));
 
         EfficientNMSDenseIndex<T><<<gridSize, blockSize, 0, stream>>>(param, topNumData, topIndexData, topAnchorsData,
             topOffsetsStartData, topOffsetsEndData, topScoresData, topClassData);
@@ -628,14 +630,14 @@ pluginStatus_t EfficientNMSDispatch(EfficientNMSParameters param, const void* bo
     // Clear Outputs (not all elements will get overwritten by the kernels, so safer to clear everything out)
     if (param.outputONNXIndices)
     {
-        cudaMemsetAsync(nmsIndicesOutput, 0xFF, param.batchSize * param.numOutputBoxes * 3 * sizeof(int), stream);
+        CSC(cudaMemsetAsync(nmsIndicesOutput, 0xFF, param.batchSize * param.numOutputBoxes * 3 * sizeof(int), stream), STATUS_FAILURE);
     }
     else
     {
-        cudaMemsetAsync(numDetectionsOutput, 0x00, param.batchSize * sizeof(int), stream);
-        cudaMemsetAsync(nmsScoresOutput, 0x00, param.batchSize * param.numOutputBoxes * sizeof(T), stream);
-        cudaMemsetAsync(nmsBoxesOutput, 0x00, param.batchSize * param.numOutputBoxes * 4 * sizeof(T), stream);
-        cudaMemsetAsync(nmsClassesOutput, 0x00, param.batchSize * param.numOutputBoxes * sizeof(int), stream);
+        CSC(cudaMemsetAsync(numDetectionsOutput, 0x00, param.batchSize * sizeof(int), stream), STATUS_FAILURE);
+        CSC(cudaMemsetAsync(nmsScoresOutput, 0x00, param.batchSize * param.numOutputBoxes * sizeof(T), stream), STATUS_FAILURE);
+        CSC(cudaMemsetAsync(nmsBoxesOutput, 0x00, param.batchSize * param.numOutputBoxes * 4 * sizeof(T), stream), STATUS_FAILURE);
+        CSC(cudaMemsetAsync(nmsClassesOutput, 0x00, param.batchSize * param.numOutputBoxes * sizeof(int), stream), STATUS_FAILURE);
     }
 
     // Empty Inputs
@@ -652,7 +654,7 @@ pluginStatus_t EfficientNMSDispatch(EfficientNMSParameters param, const void* bo
     int* topOffsetsEndData = topNumData + 2 * param.batchSize;
     int* outputIndexData = topNumData + 3 * param.batchSize;
     int* outputClassData = topNumData + 4 * param.batchSize;
-    cudaMemsetAsync(topNumData, 0x00, countersTotalSize * sizeof(int), stream);
+    CSC(cudaMemsetAsync(topNumData, 0x00, countersTotalSize * sizeof(int), stream), STATUS_FAILURE);
     cudaError_t status = cudaGetLastError();
     CSC(status, STATUS_FAILURE);
 
@@ -672,22 +674,6 @@ pluginStatus_t EfficientNMSDispatch(EfficientNMSParameters param, const void* bo
     char* sortedWorkspaceData = EfficientNMSWorkspace<char>(workspace, workspaceOffset, sortedWorkspaceSize);
     cub::DoubleBuffer<T> scoresDB(topScoresData, sortedScoresData);
     cub::DoubleBuffer<int> indexDB(topIndexData, sortedIndexData);
-
-    // Device Specific Properties
-    int device;
-    cudaGetDevice(&device);
-    struct cudaDeviceProp properties;
-    cudaGetDeviceProperties(&properties, device);
-    if (properties.regsPerBlock >= 65536)
-    {
-        // Most Devices
-        param.numSelectedBoxes = 5000;
-    }
-    else
-    {
-        // Jetson TX1/TX2
-        param.numSelectedBoxes = 2000;
-    }
 
     // Kernels
     status = EfficientNMSFilterLauncher<T>(param, (T*) scoresInput, topNumData, topIndexData, topAnchorsData,

@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,13 +15,13 @@
 # limitations under the License.
 #
 import os
-import tempfile
 import random
+import tempfile
+from multiprocessing import Process
 
 import numpy as np
 import pytest
 from polygraphy import util
-
 
 VOLUME_CASES = [
     ((1, 1, 1), 1),
@@ -35,33 +36,28 @@ def test_volume(case):
     assert util.volume(it) == vol
 
 
-class FindInDictCase(object):
-    def __init__(self, name, map, index, expected):
+class FindStrInIterableCase:
+    def __init__(self, name, seq, index, expected):
         self.name = name
-        self.map = map
+        self.seq = seq
         self.index = index
         self.expected = expected
 
 
-FIND_IN_DICT_CASES = [
-    FindInDictCase(
-        "resnet50_v1.5/output/Softmax:0",
-        map={"resnet50_v1.5/output/Softmax:0": "x"},
-        index=None,
-        expected="resnet50_v1.5/output/Softmax:0",
-    ),
-    FindInDictCase(
-        "resnet50_v1.5/output/Softmax:0",
-        map={"resnet50_v1.5/output/softmax:0": "x"},
-        index=None,
-        expected="resnet50_v1.5/output/softmax:0",
-    ),
+FIND_STR_IN_ITERABLE_CASES = [
+    # Case insensitve, plus function should return element from sequence, not name.
+    FindStrInIterableCase("Softmax:0", seq=["Softmax:0"], index=None, expected="Softmax:0"),
+    FindStrInIterableCase("Softmax:0", seq=["softmax:0"], index=None, expected="softmax:0"),
+    # Exact matches should take priority
+    FindStrInIterableCase("exact_name", seq=["exact_name_plus", "exact_name"], index=0, expected="exact_name"),
+    # Index should come into play when no matches are found
+    FindStrInIterableCase("non-existent", seq=["test", "test2"], index=1, expected="test2"),
 ]
 
 
-@pytest.mark.parametrize("case", FIND_IN_DICT_CASES)
-def test_find_in_dict(case):
-    actual = util.find_in_dict(case.name, case.map, case.index)
+@pytest.mark.parametrize("case", FIND_STR_IN_ITERABLE_CASES)
+def test_find_str_in_iterable(case):
+    actual = util.find_str_in_iterable(case.name, case.seq, case.index)
     assert actual == case.expected
 
 
@@ -155,3 +151,90 @@ def test_find_in_dirs():
 def test_value_or_from_dict(val, key, default, expected):
     actual = util.value_or_from_dict(val, key, default)
     assert actual == expected
+
+
+def test_atomic_open():
+    def write_to_file(path, content):
+        with util.LockFile(path):
+            old_contents = util.load_file(path, mode="r")
+            util.save_file(old_contents + content, path, mode="w")
+
+    NUM_LINES = 10
+    NUM_PROCESSES = 5
+
+    outfile = util.NamedTemporaryFile()
+
+    processes = [
+        Process(target=write_to_file, args=(outfile.name, f"{proc} - writing line\n" * NUM_LINES))
+        for proc in range(NUM_PROCESSES)
+    ]
+
+    for process in processes:
+        process.start()
+
+    for process in processes:
+        process.join()
+
+    for process in processes:
+        assert not process.is_alive()
+        assert process.exitcode == 0
+
+    # Since we write atomically, all processes should be able to write their
+    # contents. Furthermore, the contents should be grouped by process.
+    with open(outfile.name) as f:
+        lines = list(f.readlines())
+        assert len(lines) == NUM_LINES * NUM_PROCESSES
+
+        for idx in range(NUM_PROCESSES):
+            offset = idx * NUM_LINES
+            expected_prefix = lines[offset].partition("-")[0].strip()
+            assert all(line.startswith(expected_prefix) for line in lines[offset : offset + NUM_LINES])
+
+    # Make sure the lock file is written to the correct path and not removed automatically.
+    assert os.path.exists(outfile.name + ".lock")
+
+
+def test_make_contiguous():
+    arr = np.transpose(np.ones(shape=(5, 10), dtype=np.float32))
+    assert not util.is_contiguous(arr)
+
+    arr = util.make_contiguous(arr)
+    assert util.is_contiguous(arr)
+
+
+class TestMakeRepr:
+    def test_basic(self):
+        assert util.make_repr("Example", 1, x=2) == ("Example(1, x=2)", False, False)
+
+    def test_default_args(self):
+        assert util.make_repr("Example", None, None, x=2) == ("Example(None, None, x=2)", True, False)
+
+    def test_empty_args_are_default(self):
+        assert util.make_repr("Example", x=2) == ("Example(x=2)", True, False)
+
+    def test_default_kwargs(self):
+        assert util.make_repr("Example", 1, 2, x=None, y=None) == ("Example(1, 2)", False, True)
+
+    def test_empty_kwargs_are_default(self):
+        assert util.make_repr("Example", 1, 2) == ("Example(1, 2)", False, True)
+
+    def test_does_not_modify(self):
+        obj = {"x": float("inf")}
+        assert util.make_repr("Example", obj) == ("Example({'x': float('inf')})", False, True)
+        assert obj == {"x": float("inf")}
+
+    @pytest.mark.parametrize("obj", [float("nan"), float("inf"), float("-inf")])
+    @pytest.mark.parametrize("recursion_depth", [0, 1, 2])
+    def test_nan_inf(self, obj, recursion_depth):
+        if obj == float("inf"):
+            expected = "float('inf')"
+        elif obj == float("-inf"):
+            expected = "float('-inf')"
+        else:
+            expected = "float('nan')"
+
+        for _ in range(recursion_depth):
+            obj = {"x": obj}
+            expected = f"{{'x': {expected}}}"
+
+        assert util.make_repr("Example", obj) == (f"Example({expected})", False, True)

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -38,7 +39,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <vector>
-
+using namespace nvinfer1;
 using samplesCommon::SampleUniquePtr;
 
 const std::string gSampleName = "TensorRT.sample_int8_api";
@@ -372,6 +373,7 @@ bool SampleINT8API::setDynamicRange(SampleUniquePtr<nvinfer1::INetworkDefinition
                     case DataType::kINT8: val = static_cast<const int8_t*>(wts.values)[wb]; break;
                     case DataType::kHALF: val = static_cast<const half_float::half*>(wts.values)[wb]; break;
                     case DataType::kINT32: val = static_cast<const int32_t*>(wts.values)[wb]; break;
+                    case DataType::kUINT8: val = static_cast<uint8_t const*>(wts.values)[wb]; break;
                     }
                     max = std::max(max, std::abs(val));
                 }
@@ -484,7 +486,7 @@ bool SampleINT8API::verifyOutput(const samplesCommon::BufferManager& buffers) co
 //! \details This function creates INT8 classification network by parsing the onnx model and builds
 //!          the engine that will be used to run INT8 inference (mEngine)
 //!
-//! \return Returns true if the engine was created successfully and false otherwise
+//! \return true if the engine was created successfully and false otherwise
 //!
 sample::Logger::TestResult SampleINT8API::build()
 {
@@ -540,7 +542,6 @@ sample::Logger::TestResult SampleINT8API::build()
 
     // Configure buider
     config->setFlag(BuilderFlag::kGPU_FALLBACK);
-    config->setMaxWorkspaceSize(1_GiB);
 
     // Enable INT8 model. Required to set custom per-tensor dynamic range or INT8 Calibration
     config->setFlag(BuilderFlag::kINT8);
@@ -643,10 +644,10 @@ sample::Logger::TestResult SampleINT8API::infer()
     buffers.copyOutputToHostAsync(stream);
 
     // Wait for the work in the stream to complete
-    cudaStreamSynchronize(stream);
+    CHECK(cudaStreamSynchronize(stream));
 
     // Release stream
-    cudaStreamDestroy(stream);
+    CHECK(cudaStreamDestroy(stream));
 
     // Check and print the output of the inference
     return verifyOutput(buffers) ? sample::Logger::TestResult::kRUNNING : sample::Logger::TestResult::kFAILED;
@@ -769,17 +770,17 @@ void validateInputParams(SampleINT8APIParams& params)
 SampleINT8APIParams initializeSampleParams(SampleINT8APIArgs args)
 {
     SampleINT8APIParams params;
-    if (args.dataDirs.empty()) //!< Use default directories if user hasn't provided directory paths
+    if (args.dataDirs.empty()) // Use default directories if user hasn't provided directory paths
     {
         params.dataDirs.push_back("data/samples/int8_api/");
         params.dataDirs.push_back("data/int8_api/");
     }
-    else //!< Use the data directory provided by the user
+    else // Use the data directory provided by the user
     {
         params.dataDirs = args.dataDirs;
     }
 
-    params.dataDirs.push_back(""); //! In case of absolute path search
+    params.dataDirs.push_back(""); // In case of absolute path search
     params.verbose = args.verbose;
     params.modelFileName = args.modelFileName;
     params.imageFileName = args.imageFileName;

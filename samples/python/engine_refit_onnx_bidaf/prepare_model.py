@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,8 +21,10 @@ import numpy as np
 import json
 
 import sys, os
+
 sys.path.insert(1, os.path.join(sys.path[0], ".."))
 from downloader import getFilePath
+
 
 def drop_category_mapper_nodes(graph):
     new_inputs = []
@@ -29,17 +32,18 @@ def drop_category_mapper_nodes(graph):
         # head node, simply disconnect it with others
         assert len(org_input.outputs) == 1
         category_mapper_node = org_input.outputs[0]
-        assert category_mapper_node.op == 'CategoryMapper'
+        assert category_mapper_node.op == "CategoryMapper"
         assert len(category_mapper_node.outputs) == 1
         new_inputs.append(category_mapper_node.outputs[0])
         category_mapper_node.inputs.clear()
         category_mapper_node.outputs.clear()
 
         # Save mapping info to preprocess inputs.
-        with open(category_mapper_node.name + '.json', 'w') as fp:
+        with open(category_mapper_node.name + ".json", "w") as fp:
             json.dump(category_mapper_node.attrs, fp)
 
     graph.inputs = new_inputs
+
 
 def replace_unsupported_ops(graph):
     # replace hardmax with ArgMax
@@ -47,7 +51,7 @@ def replace_unsupported_ops(graph):
     assert len(hardmaxes) == 1
     hardmax = hardmaxes[0]
     hardmax.op = "ArgMax"
-    hardmax.name = "ArgMax(org:" + hardmax.name + ")" 
+    hardmax.name = "ArgMax(org:" + hardmax.name + ")"
     hardmax.attrs["axis"] = 1
     hardmax.attrs["keepdims"] = 0
 
@@ -61,13 +65,14 @@ def replace_unsupported_ops(graph):
 
     compress = reshape.o()
     compress.op = "Gather"
-    compress.name = "Gather(org:" + compress.name + ")" 
+    compress.name = "Gather(org:" + compress.name + ")"
     compress.attrs["axis"] = 1
 
     cast.outputs.clear()
     reshape.outputs.clear()
     # Remove the node from the graph completely
     graph.cleanup().toposort()
+
 
 def save_weights_for_refitting(graph):
     # Save weights for refitting
@@ -77,7 +82,7 @@ def save_weights_for_refitting(graph):
 
 
 def main():
-    org_model_file_path = getFilePath('samples/python/engine_refit_onnx_bidaf/bidaf-original.onnx')
+    org_model_file_path = getFilePath("samples/python/engine_refit_onnx_bidaf/bidaf-original.onnx")
 
     print("Modifying the ONNX model ...")
     original_model = onnx.load(org_model_file_path)
@@ -95,5 +100,6 @@ def main():
     print("Modified ONNX model saved as {}".format(modified_model_name))
     print("Done.")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

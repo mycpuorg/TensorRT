@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,6 +27,8 @@ namespace LayerTypeDoc
 constexpr const char* descr = R"trtdoc(Type of Layer)trtdoc";
 constexpr const char* CONVOLUTION = R"trtdoc(Convolution layer)trtdoc";
 constexpr const char* FULLY_CONNECTED = R"trtdoc(Fully connected layer)trtdoc";
+constexpr const char* GRID_SAMPLE = R"trtdoc(Grid sample layer)trtdoc";
+constexpr const char* NMS = R"trtdoc(NMS layer)trtdoc";
 constexpr const char* ACTIVATION = R"trtdoc(Activation layer)trtdoc";
 constexpr const char* POOLING = R"trtdoc(Pooling layer)trtdoc";
 constexpr const char* LRN = R"trtdoc(LRN layer)trtdoc";
@@ -65,6 +68,8 @@ constexpr const char* CONDITION = R"trtdoc(If-conditional Condition layer)trtdoc
 constexpr const char* CONDITIONAL_OUTPUT = R"trtdoc(If-conditional output layer)trtdoc";
 constexpr const char* CONDITIONAL_INPUT = R"trtdoc(If-conditional input layer)trtdoc";
 constexpr const char* EINSUM = R"trtdoc(Einsum layer)trtdoc";
+constexpr const char* ONE_HOT = R"trtdoc(OneHot layer)trtdoc";
+constexpr char const* NON_ZERO = R"trtdoc(NonZero layer)trtdoc";
 
 } // namespace LayerTypeDoc
 
@@ -81,7 +86,7 @@ namespace TensorFormatDoc
 constexpr const char* descr = R"trtdoc(
     Format of the input/output tensors.
 
-    This enum is extended to be used by both plugins and reformat-free network I/O tensors.
+    This enum is used by both plugins and network I/O tensors.
 
     For more information about data formats, see the topic "Data Format Description" located in the
     TensorRT Developer Guide (https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html).
@@ -195,7 +200,7 @@ constexpr const char* descr = R"trtdoc(
     :ivar is_network_output: :class:`bool` Whether the tensor is a network output.
     :ivar dynamic_range: :class:`Tuple[float, float]` A tuple containing the [minimum, maximum] of the dynamic range, or :class:`None` if the range was not set.
     :ivar is_shape: :class:`bool` Whether the tensor is a shape tensor.
-    :ivar allowed_formats: :class:`int` The allowed set of TensorFormat candidates. This should be an integer consisting of one or more :class:`TensorFormat` s, combined via bitwise OR after bit shifting. For example, ``1 << int(TensorFormats.CHW4) | 1 << int(TensorFormat.CHW32)``.
+    :ivar allowed_formats: :class:`int32` The allowed set of TensorFormat candidates. This should be an integer consisting of one or more :class:`TensorFormat` s, combined via bitwise OR after bit shifting. For example, ``1 << int(TensorFormats.CHW4) | 1 << int(TensorFormat.CHW32)``.
 )trtdoc";
 
 constexpr const char* set_dynamic_range = R"trtdoc(
@@ -217,6 +222,30 @@ constexpr const char* get_dynamic_range = R"trtdoc(
 constexpr const char* reset_dynamic_range = R"trtdoc(
     Undo the effect of setting the dynamic range.
 )trtdoc";
+
+constexpr const char* set_dimension_name = R"trtdoc(
+    Name a dimension of an input tensor.
+    
+    Associate a runtime dimension of an input tensor with a symbolic name.
+    Dimensions with the same non-empty name must be equal at runtime. 
+    Knowing this equality for runtime dimensions may help the TensorRT optimizer.
+    Both runtime and build-time dimensions can be named.
+    If the function is called again, with the same index, it will overwrite the previous name.
+    If None is passed as name, it will clear the name of the dimension.
+    
+    For example, setDimensionName(0, "n") associates the symbolic name "n" with the leading dimension.
+
+    :arg index: index of the dimension.
+    :arg name: name of the dimension.
+)trtdoc";
+
+constexpr const char* get_dimension_name = R"trtdoc(
+    Get the name of an input dimension.
+
+    :arg index: index of the dimension.
+    :returns: name of the dimension, or null if dimension is unnamed.
+)trtdoc";
+
 } // namespace ITensorDoc
 
 namespace ILayerDoc
@@ -263,7 +292,7 @@ constexpr const char* set_output_type = R"trtdoc(
     Constraint layer to generate output data with given type.
     Note that this method cannot be used to set the data type
     of the second output tensor of the topK layer. The data
-    type of the second output tensor of the topK layer is always Int32.
+    type of the second output tensor of the topK layer is always :class:`int32` .
 
     :arg index: The index of the output tensor to set the type.
     :arg dtype: DataType of the output.
@@ -514,6 +543,15 @@ constexpr const char* descr = R"trtdoc(
     |
     |  For example, to perform softmax on axis R of a NPQRCHW input, set bit 2 with implicit batch mode,
     |  set bit 3 with explicit batch mode.
+
+    On Xavier, this layer is not supported on DLA.
+    Otherwise, the following constraints must be satisfied to execute this layer on DLA:
+
+    - Axis must be one of the channel or spatial dimensions.
+    - There are two classes of supported input sizes:
+
+       * Non-axis, non-batch dimensions are all 1 and the axis dimension is at most 8192. This is the recommended case for using softmax since it is the most accurate.
+       * At least one non-axis, non-batch dimension greater than 1 and the axis dimension is at most 1024. Note that in this case, there may be some approximation error as the axis dimension size approaches the upper bound. See the TensorRT Developer Guide for more details on the approximation error.
 )trtdoc";
 } // namespace ISoftMaxLayerDoc
 
@@ -525,7 +563,7 @@ constexpr const char* descr = R"trtdoc(
     The output channel size is the sum of the channel sizes of the inputs.
     The other output sizes are the same as the other input sizes, which must all match.
 
-    :ivar axis: :class:`int` The axis along which concatenation occurs. 0 is the major axis (excluding the batch dimension). The default is the number of non-batch axes in the tensor minus three (e.g. for an NCHW input it would be 0), or 0 if there are fewer than 3 non-batch axes.
+    :ivar axis: :class:`int` The axis along which concatenation occurs. The default axis is the number of tensor dimensions minus three, or zero if the tensor has fewer than three dimensions. For example, for a tensor with dimensions NCHW, it is C. For implicit batch mode, the number of tensor dimensions does NOT include the implicit batch dimension.
 )trtdoc";
 } // namespace IConcatenationLayerDoc
 
@@ -592,7 +630,7 @@ constexpr const char* descr = R"trtdoc(
     A gather layer in an :class:`INetworkDefinition` .
 
     :ivar axis: :class:`int` The non-batch dimension axis to gather on. The axis must be less than the number of non-batch dimensions in the data input.
-    :ivar num_elementwise_dims: :class:`int` The number of leading dimensions of indices tensor to be handled elementwise. For `GatherMode::kDEFAULT`, it must be 0 if there is an implicit batch dimension. It can be 0 or 1 if there is not an implicit batch dimension. For `GatherMode::kND`, it can be between 0 and one less than rank(data). For `GatherMode::kELEMENT`, it must be 0.
+    :ivar num_elementwise_dims: :class:`int` The number of leading dimensions of indices tensor to be handled elementwise. For `GatherMode.DEFAULT`, it must be 0 if there is an implicit batch dimension. It can be 0 or 1 if there is not an implicit batch dimension. For `GatherMode::kND`, it can be between 0 and one less than rank(data). For `GatherMode::kELEMENT`, it must be 0.
     :ivar mode: :class:`GatherMode` The gather mode.
 )trtdoc";
 } // namespace IGatherLayerDoc
@@ -763,7 +801,7 @@ constexpr const char* descr = R"trtdoc(
         of the input tensor to the RNN.
         If :attr:`seq_lengths` is not specified, then the RNN layer assumes all sequences are size :attr:`max_seq_length` .
         All sequence lengths in :attr:`seq_lengths` should be in the range [1, :attr:`max_seq_length` ]. Zero-length sequences are not supported.
-        This tensor must be of type int32.
+        This tensor must be of type :class:`int32` .
     :ivar op: :class:`RNNOperation` The operation of the RNN layer.
     :ivar input_mode: :class:`int` The input mode of the RNN layer.
     :ivar direction: :class:`int` The direction of the RNN layer.
@@ -861,7 +899,7 @@ namespace IUnaryLayerDoc
 constexpr const char* descr = R"trtdoc(
     A unary layer in an :class:`INetworkDefinition` .
 
-    :ivar op: :class:`UnaryOperation` The unary operation for the layer.
+    :ivar op: :class:`UnaryOperation` The unary operation for the layer. When running this layer on DLA, only ``UnaryOperation.ABS`` is supported.
 )trtdoc";
 } // namespace IUnaryLayerDoc
 
@@ -940,7 +978,7 @@ constexpr const char* set_input = R"trtdoc(
      Index   Description
     ======= ========================================================================
         0     Data or Shape tensor to be shuffled.
-        1     The dimensions for the reshape operation, as a 1D Int32 shape tensor.
+        1     The dimensions for the reshape operation, as a 1D :class:`int32` shape tensor.
     ======= ========================================================================
 
     If this function is called with a value 1, then :attr:`num_inputs` changes
@@ -957,10 +995,43 @@ namespace ISliceLayerDoc
 constexpr const char* descr = R"trtdoc(
     A slice layer in an :class:`INetworkDefinition` .
 
+    The slice layer has two variants, static and dynamic.
+    Static slice specifies the start, size, and stride dimensions at layer creation time via :class:`Dims` and can use the get/set accessor functions of the :class:`ISliceLayer` .
+    Dynamic slice specifies one or more of start, size or stride as :class:`ITensor`s, by using :func:`ILayer.set_input` to add a second, third, or fourth input respectively.
+    The corresponding :class:`Dims` are used if an input is missing or null.
+
+    An application can determine if the :class:`ISliceLayer` has a dynamic output shape based on whether the size input (third input) is present and non-null.
+
+    The slice layer selects for each dimension a start location from within the input tensor, and copies elements to the output tensor using the specified stride across the input tensor.
+    Start, size, and stride tensors must be 1-D :class:`int32` shape tensors if not specified via :class:`Dims` .
+
+    An example of using slice on a tensor:
+    input = {{0, 2, 4}, {1, 3, 5}}
+    start = {1, 0}
+    size = {1, 2}
+    stride = {1, 2}
+    output = {{1, 5}}
+
+    When the sliceMode is :const:`SliceMode.CLAMP` or :const:`SliceMode.REFLECT` , for each input dimension, if its size is 0 then the corresponding output dimension must be 0 too.
+
+    A slice layer can produce a shape tensor if the following conditions are met:
+
+    * ``start``, ``size``, and ``stride`` are build time constants, either as static :class:`Dims` or as constant input tensors.
+    * The number of elements in the output tensor does not exceed 2 * :const:`Dims.MAX_DIMS` .
+
+    The input tensor is a shape tensor if the output is a shape tensor.
+
+    The following constraints must be satisfied to execute this layer on DLA:
+    * ``start``, ``size``, and ``stride`` are build time constants, either as static :class:`Dims` or as constant input tensors.
+    * sliceMode is :const:`SliceMode.DEFAULT` .
+    * Strides are 1 for all dimensions.
+    * Slicing is not performed on the first dimension
+    * The input tensor has four dimensions
+
     :ivar start: :class:`Dims` The start offset.
     :ivar shape: :class:`Dims` The output dimensions.
     :ivar stride: :class:`Dims` The slicing stride.
-    :ivar mode: :class:`SliceMode` Controls how ISliceLayer handles out of bounds coordinates.
+    :ivar mode: :class:`SliceMode` Controls how :class:`ISliceLayer` handles out of bounds coordinates.
 )trtdoc";
 
 constexpr const char* set_input = R"trtdoc(
@@ -977,7 +1048,7 @@ constexpr const char* set_input = R"trtdoc(
         1     The start tensor to begin slicing, N-dimensional for Data, and 1-D for Shape.
         2     The size tensor of the resulting slice, N-dimensional for Data, and 1-D for Shape.
         3     The stride of the slicing operation, N-dimensional for Data, and 1-D for Shape.
-        4     Value for the kFILL slice mode. Disallowed for other modes.
+        4     Value for the :const:`SliceMode.FILL` slice mode. Disallowed for other modes.
     =====   ==================================================================================
 
     If this function is called with a value greater than 0, then :attr:`num_inputs` changes
@@ -989,17 +1060,18 @@ constexpr const char* set_input = R"trtdoc(
 
 } // namespace ISliceLayerDoc
 
-namespace SliceModeDoc
+namespace SampleModeDoc
 {
-constexpr const char* descr = R"trtdoc(Controls how ISliceLayer handles out of bounds coordinates)trtdoc";
+constexpr const char* descr
+    = R"trtdoc(Controls how ISliceLayer and IGridSample handles out of bounds coordinates)trtdoc";
 
-constexpr const char* DEFAULT
-    = R"trtdoc(Fail with error when the coordinates are out of bounds. This is the default.)trtdoc";
+constexpr const char* STRICT_BOUNDS = R"trtdoc(Fail with error when the coordinates are out of bounds.)trtdoc";
+constexpr const char* DEFAULT = R"trtdoc([DEPRECATED] Use STRICT_BOUNDS.)trtdoc";
 constexpr const char* WRAP = R"trtdoc(Coordinates wrap around periodically.)trtdoc";
 constexpr const char* CLAMP = R"trtdoc(Out of bounds indices are clamped to bounds)trtdoc";
 constexpr const char* FILL = R"trtdoc(Use fill input value when coordinates are out of bounds.)trtdoc";
 constexpr const char* REFLECT = R"trtdoc(Coordinates reflect.)trtdoc";
-} // namespace SliceModeDoc
+} // namespace SampleModeDoc
 
 namespace IShapeLayerDoc
 {
@@ -1008,7 +1080,7 @@ constexpr const char* descr = R"trtdoc(
     This class sets the output to a one-dimensional tensor with the dimensions of the input tensor.
 
     For example, if the input is a four-dimensional tensor (of any type) with
-    dimensions [2,3,5,7], the output tensor is a one-dimensional Int32 tensor
+    dimensions [2,3,5,7], the output tensor is a one-dimensional :class:`int32` tensor
     of length 4 containing the sequence 2, 3, 5, 7.
 )trtdoc";
 
@@ -1028,7 +1100,7 @@ constexpr const char* descr = R"trtdoc(
     A TopK layer in an :class:`INetworkDefinition` .
 
     :ivar op: :class:`TopKOperation` The operation for the layer.
-    :ivar k: :class:`TopKOperation` the k value for the layer. Currently only values up to 25 are supported.
+    :ivar k: :class:`TopKOperation` the k value for the layer. Currently only values up to 3840 are supported.
     :ivar axes: :class:`TopKOperation` The axes along which to reduce.
 )trtdoc";
 } // namespace ITopKLayerDoc
@@ -1084,6 +1156,14 @@ constexpr const char* descr = R"trtdoc(
     A layer that represents the identity function.
 
     If tensor precision is explicitly specified, it can be used to transform from one precision to another.
+
+    Other than conversions between the same type (``float32`` -> ``float32`` for example), the only valid conversions are:
+
+    (``float32`` | ``float16`` | ``int32`` | ``bool``) -> (``float32`` | ``float16`` | ``int32`` | ``bool``)
+
+    (``float32`` | ``float16``) -> ``uint8``
+
+    ``uint8`` -> (``float32`` | ``float16``)
 )trtdoc";
 } // namespace IIdentityLayerDoc
 
@@ -1092,7 +1172,7 @@ namespace IConstantLayerDoc
 constexpr const char* descr = R"trtdoc(
     A constant layer in an :class:`INetworkDefinition` .
 
-    Note: This layer does not support boolean types.
+    Note: This layer does not support boolean and uint8 types.
 
     :ivar weights: :class:`Weights` The weights for the layer.
     :ivar shape: :class:`Dims` The shape of the layer.
@@ -1114,13 +1194,14 @@ constexpr const char* descr = R"trtdoc(
 )trtdoc";
 } // namespace IParametricReLULayerDoc
 
-namespace ResizeModeDoc
+namespace InterpolationModeDoc
 {
-constexpr const char* descr = R"trtdoc(Various modes of resize in the resize layer.)trtdoc";
+constexpr const char* descr = R"trtdoc(Various modes of interpolation, used in resize and grid_sample layers.)trtdoc";
 
-constexpr const char* NEAREST = R"trtdoc(1D, 2D, and 3D nearest neighbor resizing.)trtdoc";
-constexpr const char* LINEAR = R"trtdoc(Can handle linear, bilinear, trilinear resizing.)trtdoc";
-} // namespace ResizeModeDoc
+constexpr const char* NEAREST = R"trtdoc(1D, 2D, and 3D nearest neighbor interpolation.)trtdoc";
+constexpr const char* LINEAR = R"trtdoc(Supports linear, bilinear, trilinear interpolation.)trtdoc";
+constexpr const char* CUBIC = R"trtdoc(Supports bicubic interpolation.)trtdoc";
+} // namespace InterpolationModeDoc
 
 namespace ResizeCoordinateTransformationDoc
 {
@@ -1170,6 +1251,7 @@ constexpr const char* descr = R"trtdoc(
 
     * ResizeMode.NEAREST - resizes innermost `m` dimensions of N-D, where 0 < m <= min(3, N) and N > 0.
     * ResizeMode.LINEAR - resizes innermost `m` dimensions of N-D, where 0 < m <= min(3, N) and N > 0.
+    * ResizeMode.CUBIC - resizes innermost `2` dimensions of N-D, N >= 2.
 
     Default resize mode is ResizeMode.NEAREST.
 
@@ -1182,12 +1264,34 @@ constexpr const char* descr = R"trtdoc(
     * Set scales for resize. Each output dimension is calculated as floor(input dimension * scale).
         Only static resize layer allows setting scales where the scales are known at build-time.
 
+    If executing this layer on DLA, the following combinations of parameters are supported:
+
+    - In NEAREST mode:
+
+       * (ResizeCoordinateTransformation.ASYMMETRIC, ResizeSelector.FORMULA, ResizeRoundMode.FLOOR)
+       * (ResizeCoordinateTransformation.HALF_PIXEL, ResizeSelector.FORMULA, ResizeRoundMode.HALF_DOWN)
+       * (ResizeCoordinateTransformation.HALF_PIXEL, ResizeSelector.FORMULA, ResizeRoundMode.HALF_UP)
+
+    - In LINEAR and CUBIC mode:
+
+       * (ResizeCoordinateTransformation.HALF_PIXEL, ResizeSelector.FORMULA)
+       * (ResizeCoordinateTransformation.HALF_PIXEL, ResizeSelector.UPPER)
+
+
     :ivar shape: :class:`Dims` The output dimensions. Must to equal to input dimensions size.
     :ivar scales: :class:`List[float]` List of resize scales.
-    :ivar resize_mode: :class:`ResizeMode` Resize mode can be Linear or Nearest.
+        If executing this layer on DLA, there are three restrictions:
+        1. ``len(scales)`` has to be exactly 4.
+        2. The first two elements in scales need to be exactly 1 (for unchanged batch and channel dimensions).
+        3. The last two elements in scales, representing the scale values along height and width dimensions,
+        respectively, need to be integer values in the range of [1, 32] for NEAREST mode and [1, 4] for LINEAR.
+        Example of DLA-supported scales: [1, 1, 2, 2].
+    :ivar resize_mode: :class:`ResizeMode` Resize mode can be Linear, Cubic or Nearest.
     :ivar coordinate_transformation: :class:`ResizeCoordinateTransformationDoc` Supported resize coordinate transformation modes are ALIGN_CORNERS, ASYMMETRIC and HALF_PIXEL.
     :ivar selector_for_single_pixel: :class:`ResizeSelector` Supported resize selector modes are FORMULA and UPPER.
     :ivar nearest_rounding: :class:`ResizeRoundMode` Supported resize Round modes are HALF_UP, HALF_DOWN, FLOOR and CEIL.
+    :ivar exclude_outside: :class:`int` If set to 1, the weight of sampling locations outside the input tensor will be set to 0, and the weight will be renormalized so that their sum is 1.0.
+    :ivar cubic_coeff: :class:`float` coefficient 'a' used in cubic interpolation.
 )trtdoc";
 
 constexpr const char* set_input = R"trtdoc(
@@ -1219,8 +1323,9 @@ namespace TripLimitDoc
 {
 constexpr const char* descr = R"trtdoc(Describes kinds of trip limits.)trtdoc";
 
-constexpr const char* COUNT = R"trtdoc(Tensor is scalar of type kINT32 that contains the trip count.)trtdoc";
-constexpr const char* WHILE = R"trtdoc(Tensor is a scalar of type BOOL. Loop terminates when value is false.)trtdoc";
+constexpr const char* COUNT = R"trtdoc(Tensor is a scalar of type :class:`int32` that contains the trip count.)trtdoc";
+constexpr const char* WHILE
+    = R"trtdoc(Tensor is a scalar of type :class:`bool`. Loop terminates when its value is false.)trtdoc";
 
 } // namespace TripLimitDoc
 
@@ -1368,6 +1473,33 @@ constexpr const char* add_loop_output = R"trtdoc(
 
 } // namespace ILoopDoc
 
+namespace IOneHotLayerDoc
+{
+constexpr const char* descr = R"trtdoc(
+    A OneHot layer in a network definition.
+
+    The OneHot layer has three input tensors: Indices, Values, and Depth, one output tensor,
+    Output, and an axis attribute.
+    :ivar indices: is an Int32 tensor that determines which locations in Output to set as on_value.
+    :ivar values: is a two-element (rank=1) tensor that consists of [off_value, on_value]
+    :ivar depth: is an Int32 shape tensor of rank 0, which contains the depth (number of classes) of the one-hot encoding.
+    The depth tensor must be a build-time constant, and its value should be positive.
+    :returns: a tensor with rank = rank(indices)+1, where the added dimension contains the one-hot encoding.
+    :param axis: specifies to which dimension of the output one-hot encoding is added.
+
+    The data types of Output shall be equal to the Values data type.
+    The output is computed by copying off_values to all output elements, then setting on_value on the indices
+    specified by the indices tensor.
+
+    when axis = 0:
+    output[indices[i, j, k], i, j, k] = on_value for all i, j, k and off_value otherwise.
+
+    when axis = -1:
+    output[i, j, k, indices[i, j, k]] = on_value for all i, j, k and off_value otherwise.
+
+)trtdoc";
+} // namespace IOneHotLayerDoc
+
 namespace ISelectLayerDoc
 {
 constexpr const char* descr = R"trtdoc(
@@ -1388,6 +1520,107 @@ constexpr const char* descr = R"trtdoc(
 )trtdoc";
 } // namespace IAssertionLayerDoc
 
+namespace IGridSampleLayerDoc
+{
+constexpr const char* descr = R"trtdoc(
+    A grid sample layer in an :class:`INetworkDefinition` .
+
+    This layer interpolates an input tensor using a sampling grid tensor into an output tensor.
+
+    :ivar interpolation: class:`InterpolationType` The interpolation type to use in the layer.
+    :ivar align_nodes: class:`int` the align mode to use in the layer
+    :ivar padding_mode: :class:`GridSamplePaddingMode` The padding mode to use in the layer.
+)trtdoc";
+} // namespace IGridSampleLayerDoc
+
+namespace BoundingBoxFormatDoc
+{
+constexpr const char* descr = R"trtdoc(
+    Enumerates bounding box data formats used for the Boxes input tensor in the NMS layer.
+)trtdoc";
+
+constexpr const char* CORNER_PAIRS = R"trtdoc((x1, y1, x2, y2) where (x1, y1) and (x2, y2) are any pair of diagonal corners)trtdoc";
+constexpr const char* CENTER_SIZES = R"trtdoc((x_center, y_center, width, height) where (x_center, y_center) is the center point of the box)trtdoc";
+
+} // namespace BoundingBoxFormatDoc
+
+namespace INMSLayerDoc
+{
+constexpr const char* descr = R"trtdoc(
+    A non-maximum suppression layer in an :class:`INetworkDefinition` .
+
+    Boxes: The input boxes tensor to the layer.
+    This tensor contains the input bounding boxes. It is a linear tensor of type ``float32`` or ``float16``.
+    It has shape [batchSize, numInputBoundingBoxes, numClasses, 4] if the boxes are per class, or
+    [batchSize, numInputBoundingBoxes, 4] if the same boxes are to be used for each class.
+
+    Scores: The input scores tensor to the layer.
+    This tensor contains the per-box scores. It is a linear tensor of the same type as the boxes tensor.
+    It has shape [batchSize, numInputBoundingBoxes, numClasses].
+
+    MaxOutputBoxesPerClass: The input maxOutputBoxesPerClass tensor to the layer.
+    This tensor contains the maximum number of output boxes per batch item per class.
+    It is a scalar (0D tensor) of type ``int32``.
+
+    IoUThreshold is the maximum IoU for selected boxes.
+    It is a scalar (0D tensor) of type ``float32`` in the range [0.0, 1.0].
+    It is an optional input with default 0.0.
+    Use :func:`set_input` to add this optional tensor.
+
+    ScoreThreshold is the value that a box score must exceed in order to be selected.
+    It is a scalar (0D tensor) of type ``float32``. It is an optional input with default 0.0.
+    Use :func:`set_input` to add this optional tensor.
+
+    The SelectedIndices output tensor contains the indices of the selected boxes.
+    It is a linear tensor of type ``int32``. It has shape [NumOutputBoxes, 3].]
+    Each row contains a (batchIndex, classIndex, boxIndex) tuple.
+    The output boxes are sorted in order of increasing batchIndex and then in order of decreasing score within each batchIndex.
+    For each batchIndex, the ordering of output boxes with the same score is unspecified.
+    If MaxOutputBoxesPerClass is a constant input, the maximum number of output boxes is
+    batchSize * numClasses * min(numInputBoundingBoxes, MaxOutputBoxesPerClass).
+    Otherwise, the maximum number of output boxes is batchSize * numClasses * numInputBoundingBoxes.
+    The maximum number of output boxes is used to determine the upper-bound on allocated memory for this output tensor.
+
+    The NumOutputBoxes output tensor contains the number of output boxes in selectedIndices.
+    It is a scalar (0D tensor) of type ``int32``.
+
+    The NMS algorithm iterates through a set of bounding boxes and their confidence scores,
+    in decreasing order of score. Boxes are selected if their score is above a given threshold,
+    and their intersection-over-union (IoU) with previously selected boxes is less than or equal
+    to a given threshold.
+    This layer implements NMS per batch item and per class.
+
+    For each batch item, the ordering of candidate bounding boxes with the same score is unspecified.
+
+    :ivar bounding_box_format: :class:`BoundingBoxFormat` The bounding box format used by the layer. Default is CORNER_PAIRS.
+    :ivar topk_box_limit: :class:`int` The maximum number of filtered boxes considered for selection. Default is 2000 for SM 5.3 and 6.2 devices, and 5000 otherwise. The TopK box limit must be less than or equal to {2000 for SM 5.3 and 6.2 devices, 5000 otherwise}.
+)trtdoc";
+
+constexpr const char* set_input = R"trtdoc(
+    Sets the input tensor for the given index.
+    The indices are as follows:
+
+    ======= ========================================================================
+     Index   Description
+    ======= ========================================================================
+        0     The required Boxes tensor.
+        1     The required Scores tensor.
+        2     The required MaxOutputBoxesPerClass tensor.
+        3     The optional IoUThreshold tensor.
+        4     The optional ScoreThreshold tensor.
+    ======= ========================================================================
+
+    If this function is called for an index greater or equal to :attr:`num_inputs`,
+    then afterwards :attr:`num_inputs` returns index + 1, and any missing intervening
+    inputs are set to null. Note that only optional inputs can be missing.
+
+    :arg index: The index of the input tensor.
+    :arg tensor: The input tensor.
+)trtdoc";
+
+} // namespace INMSLayerDoc
+
+
 namespace FillOperationDoc
 {
 constexpr const char* descr = R"trtdoc(The tensor fill operations that may performed by an Fill layer.)trtdoc";
@@ -1395,6 +1628,8 @@ constexpr const char* descr = R"trtdoc(The tensor fill operations that may perfo
 constexpr const char* LINSPACE = R"trtdoc(Generate evenly spaced numbers over a specified interval)trtdoc";
 constexpr const char* RANDOM_UNIFORM
     = R"trtdoc(Generate a tensor with random values drawn from a uniform distribution)trtdoc";
+constexpr const char* RANDOM_NORMAL
+    = R"trtdoc(Generate a tensor with random values drawn from a normal distribution)trtdoc";
 } // namespace FillOperationDoc
 
 namespace IFillLayerDoc
@@ -1429,8 +1664,9 @@ constexpr const char* set_alpha = R"trtdoc(
     ==============   ==================
     Operation        Usage
     ==============   ==================
-    kLINSPACE        the start value;
-    kRANDOMUNIFORM   the minimum value;
+    kLINSPACE         the start value;
+    kRANDOM_UNIFORM   the minimum value;
+    kRANDOM_NORMAL    the mean of the normal distribution;
     ==============   ==================
 
     :arg alpha: has different meanings for each operators.
@@ -1448,7 +1684,8 @@ constexpr const char* set_beta = R"trtdoc(
     Operation        Usage
     ===============  ===================
     kLINSPACE        the delta value;
-    kRANDOMUNIFORM   the maximal value;
+    kRANDOM_UNIFORM   the maximal value;
+    kRANDOM_NORMAL    the standard deviation of the normal distribution;
     ===============  ===================
 
     :arg beta: has different meanings for each operators.
@@ -1476,6 +1713,14 @@ constexpr const char* set_input = R"trtdoc(
         0     Shape tensor, represents the output tensor's dimensions.
         1     Minimum, a scalar, represents the minimum random value.
         2     Maximum, a scalar, represents the maximal random value.
+    =====   ========================================================
+
+    =====   ========================================================
+    Index   Description for kRANDOM_NORMAL
+    =====   ========================================================
+        0     Shape tensor, represents the output tensor's dimensions.
+        1     Mean, a scalar, represents the mean of the normal distribution.
+        2     Scale, a scalar, represents the standard deviation of the normal distribution.
     =====   ========================================================
 
     :arg index: the index of the input to modify.
@@ -1608,7 +1853,7 @@ constexpr const char* descr = R"trtdoc(
 constexpr const char* set_condition = R"trtdoc(
     Set the condition tensor for this If-Conditional construct.
 
-    The ``condition`` tensor must be a 0D data tensor (scalar) with type DataType::kBOOL.
+    The ``condition`` tensor must be a 0D data tensor (scalar) with type :class:`bool`.
 
     :param condition: The condition tensor that will determine which subgraph to execute.
 
@@ -1641,7 +1886,7 @@ constexpr const char* descr = R"trtdoc(
     An Einsum layer in an :class:`INetworkDefinition` .
 
     This layer implements a summation over the elements of the inputs along dimensions specified by the equation parameter, based on the Einstein summation convention.
-    The layer can have one or more inputs of rank >= 0. All the inputs must be of same data type. This layer supports all TensorRT data types except trt.bool.
+    The layer can have one or more inputs of rank >= 0. All the inputs must be of same data type. This layer supports all TensorRT data types except :class:`bool`.
     There is one output tensor of the same type as the input tensors. The shape of output tensor is determined by the equation.
 
     The equation specifies ASCII lower-case letters for each dimension in the inputs in the same order as the dimensions, separated by comma for each input.
@@ -1672,6 +1917,17 @@ constexpr const char* descr = R"trtdoc(
 
 )trtdoc";
 } // namespace IEinsumLayerDoc
+
+namespace INonZeroLayerDoc
+{
+constexpr char const* descr = R"trtdoc(
+    A NonZero layer in an :class:`INetworkDefinition` .
+
+    Computes the indices of the input tensor where the value is non-zero. The returned indices are in row-major order.
+
+    The output shape is always `{D, C}`, where `D` is the number of dimensions of the input and `C` is the number of non-zero values.
+)trtdoc";
+} // namespace INonZeroLayerDoc
 
 namespace INetworkDefinitionDoc
 {
@@ -1960,7 +2216,7 @@ constexpr const char* add_topk = R"trtdoc(
 
     The TopK layer has two outputs of the same dimensions. The first contains data values, the second contains index positions for the values. Output values are sorted, largest first for operation :const:`TopKOperation.MAX` and smallest first for operation :const:`TopKOperation.MIN` .
 
-    Currently only values of K up to 1024 are supported.
+    Currently only values of K up to 3840 are supported.
 
     :arg input: The input tensor to the layer.
     :arg op: Operation to perform.
@@ -2164,6 +2420,32 @@ constexpr const char* add_assertion = R"trtdoc(
     :returns: The new assertion layer, or :class:`None` if it could not be created.
 )trtdoc";
 
+constexpr const char* add_grid_sample = R"trtdoc(
+    Add a grid sample layer.
+    See :class:`IGridSampleLayer` for more information.
+
+    :arg input: The input tensor to the layer.
+    :arg grid: The grid tensor to the layer.
+    :ivar interpolation_mode: class:`InterpolationMode` The interpolation mode to use in the layer. Default is LINEAR.
+    :ivar align_corners: class:`bool` the align mode to use in the layer. Default is False.
+    :ivar padding_mode: :class:`SampleMode` The padding mode to use in the layer. Default is FILL.
+
+    :returns: The new grid sample layer, or :class:`None` if it could not be created.
+)trtdoc";
+
+constexpr const char* add_nms = R"trtdoc(
+    Add a non-maximum suppression layer to the network.
+    See :class:`INMSLayer` for more information.
+
+    :arg boxes: The input boxes tensor to the layer.
+    :arg scores: The input scores tensor to the layer.
+    :arg max_output_boxes_per_class: The maxOutputBoxesPerClass tensor to the layer.
+    :ivar bounding_box_format: :class:`BoundingBoxFormat` The bounding box format used by the layer. Default is CORNER_PAIRS.
+    :ivar topk_box_limit: :class:`int` The maximum number of filtered boxes considered for selection per batch item. Default is 2000 for SM 5.3 and 6.2 devices, and 5000 otherwise. The TopK box limit must be less than or equal to {2000 for SM 5.3 and 6.2 devices, 5000 otherwise}.
+
+    :returns: The new NMS layer, or :class:`None` if it could not be created.
+)trtdoc";
+
 constexpr const char* add_fill = R"trtdoc(
     Add a fill layer.
     See :class:`IFillLayer` for more information.
@@ -2172,6 +2454,18 @@ constexpr const char* add_fill = R"trtdoc(
     :arg op: The fill operation that the layer applies.
 
     :returns: The new fill layer, or :class:`None` if it could not be created.
+)trtdoc";
+
+constexpr const char* add_one_hot = R"trtdoc(
+    Add a OneHot layer to the network.
+    See :class:`IOneHotLayer` for more information.
+
+    :arg indices: The tensor to get indices from to populate the output tensor.
+    :arg values: The tensor to get off (cold) value and on (hot) value
+    :arg depth: The tensor to get depth (number of classes) of one-hot encoding
+    :arg axis: The axis to append the one-hot encoding to
+
+    :returns: The new OneHot layer, or :class:`None` if it could not be created.
 )trtdoc";
 
 constexpr const char* set_weights_name = R"trtdoc(
@@ -2211,7 +2505,7 @@ constexpr const char* unmark_output = R"trtdoc(
 constexpr const char* mark_output_for_shapes = R"trtdoc(
     Enable tensor's value to be computed by :func:`IExecutionContext.get_shape_binding`.
 
-    :arg tensor: The tensor to unmark as an output tensor. The tensor must be of type :class:`tensorrt.int32` and have no more than one dimension.
+    :arg tensor: The tensor to unmark as an output tensor. The tensor must be of type :class:`int32` and have no more than one dimension.
 
     :returns: :class:`True` if successful, :class:`False` if tensor is already marked as an output.
 )trtdoc";
@@ -2300,6 +2594,15 @@ constexpr const char* add_einsum = R"trtdoc(
     :arg equation: The Einsum equation of the layer.
 
     :returns: the new Einsum layer, or :class:`None` if it could not be created.
+)trtdoc";
+
+constexpr char const* add_non_zero = R"trtdoc(
+    Adds an NonZero layer to the network.
+    See :class:`INonZeroLayer` for more information.
+
+    :arg input: The input tensor to the layer.
+
+    :returns: the new NonZero layer, or :class:`None` if it could not be created.
 )trtdoc";
 
 } // namespace INetworkDefinitionDoc

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,6 +18,7 @@
 #include <cstring>
 
 using namespace nvinfer1;
+using namespace nvinfer1::plugin;
 using nvinfer1::plugin::Region;
 using nvinfer1::plugin::RegionParameters; // Needed for Windows Build
 using nvinfer1::plugin::RegionPluginCreator;
@@ -227,7 +229,7 @@ Region::Region(const void* buffer, size_t length)
     {
         smTree.reset();
     }
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 int Region::getNbOutputs() const noexcept
@@ -237,8 +239,8 @@ int Region::getNbOutputs() const noexcept
 
 Dims Region::getOutputDimensions(int index, const Dims* inputs, int nbInputDims) noexcept
 {
-    ASSERT(nbInputDims == 1);
-    ASSERT(index == 0);
+    PLUGIN_ASSERT(nbInputDims == 1);
+    PLUGIN_ASSERT(index == 0);
     return inputs[0];
 }
 
@@ -364,7 +366,7 @@ void Region::serialize(void* buffer) const noexcept
             }
         }
     }
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 bool Region::supportsFormat(DataType type, PluginFormat format) const noexcept
@@ -403,12 +405,20 @@ void Region::destroy() noexcept
 
 IPluginV2Ext* Region::clone() const noexcept
 {
-    RegionParameters params{num, coords, classes, nullptr};
-    Region* plugin = new Region(params, C, H, W);
-    plugin->setPluginNamespace(mPluginNamespace.c_str());
-    plugin->setSoftmaxTree(smTree);
+    try
+    {
+        RegionParameters params{num, coords, classes, nullptr};
+        Region* plugin = new Region(params, C, H, W);
+        plugin->setPluginNamespace(mPluginNamespace.c_str());
+        plugin->setSoftmaxTree(smTree);
 
-    return plugin;
+        return plugin;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 // Set plugin namespace
@@ -425,7 +435,7 @@ const char* Region::getPluginNamespace() const noexcept
 // Return the DataType of the plugin output at the requested index
 DataType Region::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
 {
-    ASSERT(index == 0);
+    PLUGIN_ASSERT(index == 0);
     return DataType::kFLOAT;
 }
 
@@ -446,18 +456,18 @@ void Region::configurePlugin(const Dims* inputDims, int nbInputs, const Dims* ou
     const DataType* inputTypes, const DataType* outputTypes, const bool* inputIsBroadcast,
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize) noexcept
 {
-    ASSERT(*inputTypes == DataType::kFLOAT && floatFormat == PluginFormat::kLINEAR);
-    ASSERT(nbInputs == 1);
-    ASSERT(nbOutputs == 1);
+    PLUGIN_ASSERT(*inputTypes == DataType::kFLOAT && floatFormat == PluginFormat::kLINEAR);
+    PLUGIN_ASSERT(nbInputs == 1);
+    PLUGIN_ASSERT(nbOutputs == 1);
     C = inputDims[0].d[0];
     H = inputDims[0].d[1];
     W = inputDims[0].d[2];
     /*
      * In the below assertion, 1 stands for the objectness of the bounding box
      * We should also
-     * ASSERT(coords == 4);
+     * PLUGIN_ASSERT(coords == 4);
      */
-    ASSERT(C == num * (coords + 1 + classes));
+    PLUGIN_ASSERT(C == num * (coords + 1 + classes));
 }
 
 // Attach the plugin object to an execution context and grant the plugin the access to some context resource.
@@ -495,43 +505,60 @@ const PluginFieldCollection* RegionPluginCreator::getFieldNames() noexcept
 
 IPluginV2Ext* RegionPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    const PluginField* fields = fc->fields;
-    for (int i = 0; i < fc->nbFields; ++i)
+    try
     {
-        const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "num"))
+        const PluginField* fields = fc->fields;
+        for (int i = 0; i < fc->nbFields; ++i)
         {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.num = *(static_cast<const int*>(fields[i].data));
+            const char* attrName = fields[i].name;
+            if (!strcmp(attrName, "num"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.num = *(static_cast<const int*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "coords"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.coords = *(static_cast<const int*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "classes"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.classes = *(static_cast<const int*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "smTree"))
+            {
+                // TODO not sure if this will work
+                void* tmpData = const_cast<void*>(fields[i].data);
+                params.smTree = static_cast<nvinfer1::plugin::softmaxTree*>(tmpData);
+            }
         }
-        if (!strcmp(attrName, "coords"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.coords = *(static_cast<const int*>(fields[i].data));
-        }
-        if (!strcmp(attrName, "classes"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.classes = *(static_cast<const int*>(fields[i].data));
-        }
-        if (!strcmp(attrName, "smTree"))
-        {
-            // TODO not sure if this will work
-            void* tmpData = const_cast<void*>(fields[i].data);
-            params.smTree = static_cast<nvinfer1::plugin::softmaxTree*>(tmpData);
-        }
-    }
 
-    Region* obj = new Region(params);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+        Region* obj = new Region(params);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
-IPluginV2Ext* RegionPluginCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength) noexcept
+IPluginV2Ext* RegionPluginCreator::deserializePlugin(
+    const char* name, const void* serialData, size_t serialLength) noexcept
 {
-    // This object will be deleted when the network is destroyed, which will
-    // call Region::destroy()
-    Region* obj = new Region(serialData, serialLength);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+    try
+    {
+        // This object will be deleted when the network is destroyed, which will
+        // call Region::destroy()
+        Region* obj = new Region(serialData, serialLength);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }

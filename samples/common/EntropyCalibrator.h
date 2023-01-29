@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -99,7 +100,7 @@ private:
 //!  CalibrationAlgoType is kENTROPY_CALIBRATION_2.
 //!
 template <typename TBatchStream>
-class Int8EntropyCalibrator2 : public IInt8EntropyCalibrator2
+class Int8EntropyCalibrator2 : public nvinfer1::IInt8EntropyCalibrator2
 {
 public:
     Int8EntropyCalibrator2(

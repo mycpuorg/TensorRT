@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -44,7 +45,7 @@ Reorg::Reorg(const void* buffer, size_t length)
     H = read<int>(d);
     W = read<int>(d);
     stride = read<int>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 int Reorg::getNbOutputs() const noexcept
@@ -54,8 +55,8 @@ int Reorg::getNbOutputs() const noexcept
 
 Dims Reorg::getOutputDimensions(int index, const Dims* inputs, int nbInputDims) noexcept
 {
-    ASSERT(nbInputDims == 1);
-    ASSERT(index == 0);
+    PLUGIN_ASSERT(nbInputDims == 1);
+    PLUGIN_ASSERT(index == 0);
     return Dims3(inputs[0].d[0] * stride * stride, inputs[0].d[1] / stride, inputs[0].d[2] / stride);
 }
 
@@ -81,7 +82,7 @@ void Reorg::serialize(void* buffer) const noexcept
     write(d, H);
     write(d, W);
     write(d, stride);
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 bool Reorg::supportsFormat(DataType type, PluginFormat format) const noexcept
@@ -131,7 +132,7 @@ const char* Reorg::getPluginNamespace() const noexcept
 DataType Reorg::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
 {
     // Only 1 input and 1 output from the plugin layer
-    ASSERT(index == 0);
+    PLUGIN_ASSERT(index == 0);
 
     // Only DataType::kFLOAT is acceptable by the plugin layer
     return DataType::kFLOAT;
@@ -154,15 +155,15 @@ void Reorg::configurePlugin(const Dims* inputDims, int nbInputs, const Dims* out
     const DataType* inputTypes, const DataType* outputTypes, const bool* inputIsBroadcast,
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize) noexcept
 {
-    ASSERT(*inputTypes == DataType::kFLOAT && floatFormat == PluginFormat::kLINEAR);
-    ASSERT(nbInputs == 1);
-    ASSERT(nbOutputs == 1);
-    ASSERT(stride > 0);
+    PLUGIN_ASSERT(*inputTypes == DataType::kFLOAT && floatFormat == PluginFormat::kLINEAR);
+    PLUGIN_ASSERT(nbInputs == 1);
+    PLUGIN_ASSERT(nbOutputs == 1);
+    PLUGIN_ASSERT(stride > 0);
     C = inputDims[0].d[0];
     H = inputDims[0].d[1];
     W = inputDims[0].d[2];
-    ASSERT(H % stride == 0);
-    ASSERT(W % stride == 0);
+    PLUGIN_ASSERT(H % stride == 0);
+    PLUGIN_ASSERT(W % stride == 0);
 }
 
 // Attach the plugin object to an execution context and grant the plugin the access to some context resource.
@@ -173,9 +174,17 @@ void Reorg::detachFromContext() noexcept {}
 
 IPluginV2Ext* Reorg::clone() const noexcept
 {
-    IPluginV2Ext* plugin = new Reorg(C, H, W, stride);
-    plugin->setPluginNamespace(mPluginNamespace.c_str());
-    return plugin;
+    try
+    {
+        IPluginV2Ext* plugin = new Reorg(C, H, W, stride);
+        plugin->setPluginNamespace(mPluginNamespace.c_str());
+        return plugin;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 ReorgPluginCreator::ReorgPluginCreator()
@@ -204,21 +213,41 @@ const PluginFieldCollection* ReorgPluginCreator::getFieldNames() noexcept
 
 IPluginV2Ext* ReorgPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    const PluginField* fields = fc->fields;
-    ASSERT(fc->nbFields == 1);
-    ASSERT(fields[0].type == PluginFieldType::kINT32);
-    stride = static_cast<int>(*(static_cast<const int*>(fields[0].data)));
+    try
+    {
+        const PluginField* fields = fc->fields;
+        PLUGIN_VALIDATE(fc->nbFields == 1);
+        PLUGIN_VALIDATE(fields[0].type == PluginFieldType::kINT32);
+        PLUGIN_VALIDATE(!strcmp(fields[0].name, "stride"));
+        stride = static_cast<int32_t>(*(static_cast<int32_t const*>(fields[0].data)));
 
-    Reorg* obj = new Reorg(stride);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+        PLUGIN_VALIDATE(stride > 0);
+
+        Reorg* obj = new Reorg(stride);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
-IPluginV2Ext* ReorgPluginCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength) noexcept
+IPluginV2Ext* ReorgPluginCreator::deserializePlugin(
+    const char* name, const void* serialData, size_t serialLength) noexcept
 {
-    // This object will be deleted when the network is destroyed, which will
-    // call ReorgPlugin::destroy()
-    Reorg* obj = new Reorg(serialData, serialLength);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+    try
+    {
+        // This object will be deleted when the network is destroyed, which will
+        // call ReorgPlugin::destroy()
+        Reorg* obj = new Reorg(serialData, serialLength);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }

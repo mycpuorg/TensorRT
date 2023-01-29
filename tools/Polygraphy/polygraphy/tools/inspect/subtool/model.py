@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,12 +20,12 @@ from polygraphy import mod, util
 from polygraphy.logger import G_LOGGER
 from polygraphy.tools.args import (
     ModelArgs,
-    OnnxLoaderArgs,
-    OnnxShapeInferenceArgs,
-    TfLoaderArgs,
-    TrtEngineLoaderArgs,
-    TrtNetworkLoaderArgs,
-    TrtPluginLoaderArgs,
+    OnnxLoadArgs,
+    OnnxInferShapesArgs,
+    TfLoadArgs,
+    TrtLoadEngineArgs,
+    TrtLoadNetworkArgs,
+    TrtLoadPluginsArgs,
 )
 from polygraphy.tools.base import Tool
 
@@ -40,15 +41,19 @@ class Model(Tool):
 
     def __init__(self):
         super().__init__("model")
-        self.subscribe_args(ModelArgs(model_required=True, inputs=None))
-        self.subscribe_args(TfLoaderArgs(artifacts=False, outputs=False))
-        self.subscribe_args(OnnxShapeInferenceArgs())
-        self.subscribe_args(OnnxLoaderArgs(output_prefix=None))
-        self.subscribe_args(TrtPluginLoaderArgs())
-        self.subscribe_args(TrtNetworkLoaderArgs(outputs=False))
-        self.subscribe_args(TrtEngineLoaderArgs())
 
-    def add_parser_args(self, parser):
+    def get_subscriptions_impl(self):
+        return [
+            ModelArgs(model_opt_required=True, input_shapes_opt_name=False),
+            TfLoadArgs(allow_artifacts=False, allow_custom_outputs=False),
+            OnnxInferShapesArgs(),
+            OnnxLoadArgs(outputs_opt_prefix=False),
+            TrtLoadPluginsArgs(),
+            TrtLoadNetworkArgs(allow_custom_outputs=False),
+            TrtLoadEngineArgs(),
+        ]
+
+    def add_parser_args_impl(self, parser):
         parser.add_argument(
             "--convert-to",
             "--display-as",
@@ -56,61 +61,61 @@ class Model(Tool):
             choices=["trt"],
             dest="display_as",
         )
+
         parser.add_argument(
-            "--mode",
-            "--layer-info",
-            help="Display layers: {{"
-            "'none': Display no layer information, "
-            "'basic': Display layer inputs and outputs, "
-            "'attrs': Display layer inputs, outputs and attributes, "
-            "'full': Display layer inputs, outputs, attributes, and weights"
-            "}}",
-            choices=["none", "basic", "attrs", "full"],
-            dest="mode",
-            default="none",
+            "--show",
+            help="Controls what is displayed: {{"
+            "'layers': Display basic layer information like name, op, inputs, and outputs, "
+            "'attrs': Display all available per-layer attributes; has no effect if 'layers' is not enabled, "
+            "'weights': Display all weights in the model; if 'layers' is enabled, also shows per-layer constants"
+            "}}. More than one option may be specified",
+            choices=["layers", "attrs", "weights"],
+            nargs="+",
+            default=[],
         )
 
-    def run(self, args):
+    def run_impl(self, args):
+        def show(aspect):
+            return aspect in args.show
+
+        def inspect_trt():
+            if self.arg_groups[ModelArgs].model_type == "engine":
+                with self.arg_groups[TrtLoadEngineArgs].load_engine() as engine:
+                    engine_str = trt_util.str_from_engine(engine, show_layers=show("layers"), show_attrs=show("attrs"))
+                    G_LOGGER.info(f"==== TensorRT Engine ====\n{engine_str}")
+            else:
+                builder, network, parser = util.unpack_args(self.arg_groups[TrtLoadNetworkArgs].load_network(), 3)
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(builder)
+                    stack.enter_context(network)
+                    if parser:
+                        stack.enter_context(parser)
+                    network_str = trt_util.str_from_network(
+                        network, show_layers=show("layers"), show_attrs=show("attrs"), show_weights=show("weights")
+                    ).strip()
+                    G_LOGGER.info(f"==== TensorRT Network ====\n{network_str}")
+
+        def inspect_onnx():
+            onnx_model = self.arg_groups[OnnxLoadArgs].load_onnx()
+            model_str = onnx_util.str_from_onnx(
+                onnx_model, show_layers=show("layers"), show_attrs=show("attrs"), show_weights=show("weights")
+            ).strip()
+            G_LOGGER.info(f"==== ONNX Model ====\n{model_str}")
+
+        def inspect_tf():
+            tf_graph, _ = self.arg_groups[TfLoadArgs].load_graph()
+            graph_str = tf_util.str_from_graph(
+                tf_graph, show_layers=show("layers"), show_attrs=show("attrs"), show_weights=show("weights")
+            ).strip()
+            G_LOGGER.info(f"==== TensorFlow Graph ====\n{graph_str}")
+
         func = None
-
         if self.arg_groups[ModelArgs].model_type.is_tf():
-            func = self.inspect_tf
-
+            func = inspect_tf
         if self.arg_groups[ModelArgs].model_type.is_onnx():
-            func = self.inspect_onnx
-
+            func = inspect_onnx
         if self.arg_groups[ModelArgs].model_type.is_trt() or args.display_as == "trt":
-            func = self.inspect_trt
-
+            func = inspect_trt
         if func is None:
             G_LOGGER.critical("Could not determine how to display this model. Maybe you need to specify --display-as?")
-
-        func(args)
-
-    def inspect_trt(self, args):
-        if self.arg_groups[ModelArgs].model_type == "engine":
-            if args.mode != "none":
-                G_LOGGER.warning("Displaying layer information for TensorRT engines is not currently supported")
-
-            with self.arg_groups[TrtEngineLoaderArgs].load_serialized_engine() as engine:
-                engine_str = trt_util.str_from_engine(engine)
-                G_LOGGER.info("==== TensorRT Engine ====\n{:}".format(engine_str))
-        else:
-            builder, network, parser = util.unpack_args(self.arg_groups[TrtNetworkLoaderArgs].load_network(), 3)
-            with contextlib.ExitStack() as stack:
-                stack.enter_context(builder)
-                stack.enter_context(network)
-                if parser:
-                    stack.enter_context(parser)
-                network_str = trt_util.str_from_network(network, mode=args.mode).strip()
-                G_LOGGER.info("==== TensorRT Network ====\n{:}".format(network_str))
-
-    def inspect_onnx(self, args):
-        onnx_model = self.arg_groups[OnnxLoaderArgs].load_onnx()
-        model_str = onnx_util.str_from_onnx(onnx_model, mode=args.mode).strip()
-        G_LOGGER.info("==== ONNX Model ====\n{:}".format(model_str))
-
-    def inspect_tf(self, args):
-        tf_graph, _ = self.arg_groups[TfLoaderArgs].load_graph()
-        graph_str = tf_util.str_from_graph(tf_graph, mode=args.mode).strip()
-        G_LOGGER.info("==== TensorFlow Graph ====\n{:}".format(graph_str))
+        func()

@@ -1,17 +1,13 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+ * property and proprietary rights in and to this material, related
+ * documentation and any modifications thereto. Any use, reproduction,
+ * disclosure or distribution of this material and related documentation
+ * without an express license agreement from NVIDIA CORPORATION or
+ * its affiliates is strictly prohibited.
  */
 
 #ifndef NV_INFER_LEGACY_DIMS_H
@@ -44,7 +40,7 @@ public:
     //! \brief Construct an empty Dims2 object.
     //!
     Dims2()
-        : Dims{2, {}}
+        : Dims2(0, 0)
     {
     }
 
@@ -55,8 +51,14 @@ public:
     //! \param d1 The second element.
     //!
     Dims2(int32_t d0, int32_t d1)
-        : Dims{2, {d0, d1}}
     {
+        nbDims = 2;
+        d[0] = d0;
+        d[1] = d1;
+        for (int32_t i{nbDims}; i < Dims::MAX_DIMS; ++i)
+        {
+            d[i] = 0;
+        }
     }
 };
 
@@ -131,14 +133,14 @@ public:
 //! \class Dims3
 //! \brief Descriptor for three-dimensional data.
 //!
-class Dims3 : public Dims
+class Dims3 : public Dims2
 {
 public:
     //!
     //! \brief Construct an empty Dims3 object.
     //!
     Dims3()
-        : Dims{3, {}}
+        : Dims3(0, 0, 0)
     {
     }
 
@@ -150,8 +152,10 @@ public:
     //! \param d2 The third element.
     //!
     Dims3(int32_t d0, int32_t d1, int32_t d2)
-        : Dims{3, {d0, d1, d2}}
+        : Dims2(d0, d1)
     {
+        nbDims = 3;
+        d[2] = d2;
     }
 };
 
@@ -159,14 +163,14 @@ public:
 //! \class Dims4
 //! \brief Descriptor for four-dimensional data.
 //!
-class Dims4 : public Dims
+class Dims4 : public Dims3
 {
 public:
     //!
     //! \brief Construct an empty Dims4 object.
     //!
     Dims4()
-        : Dims{4, {}}
+        : Dims4(0, 0, 0, 0)
     {
     }
 
@@ -179,8 +183,10 @@ public:
     //! \param d3 The fourth element.
     //!
     Dims4(int32_t d0, int32_t d1, int32_t d2, int32_t d3)
-        : Dims{4, {d0, d1, d2, d3}}
+        : Dims3(d0, d1, d2)
     {
+        nbDims = 4;
+        d[3] = d3;
     }
 };
 

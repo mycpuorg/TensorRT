@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -61,7 +62,8 @@ class OnnxExporter(BaseExporter):
     def export_node(node: Node, do_type_check: bool) -> onnx.NodeProto:
         # Cannot pass in attrs directly as make_node will change the order
         onnx_node = onnx.helper.make_node(
-            node.op, inputs=[t.name for t in node.inputs], outputs=[t.name for t in node.outputs], name=node.name
+            node.op, inputs=[t.name for t in node.inputs], outputs=[t.name for t in node.outputs],
+            name=node.name, domain=node.domain
         )
         # Convert Tensors and Graphs to TensorProtos and GraphProtos respectively
         for key, val in node.attrs.items():
@@ -143,4 +145,7 @@ def export_onnx(graph: Graph, do_type_check=True, **kwargs) -> "onnx.ModelProto"
         else:
             kwargs["opset_imports"] = graph.import_domains
 
-    return onnx.helper.make_model(onnx_graph, **kwargs)
+    model = onnx.helper.make_model(onnx_graph, **kwargs)
+    model.producer_name = graph.producer_name
+    model.producer_version = graph.producer_version
+    return model

@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,7 +23,15 @@ import argparse
 import numpy as np
 import tensorrt as trt
 import pycuda.driver as cuda
-import pycuda.autoinit
+
+# Use autoprimaryctx if available (pycuda >= 2021.1) to
+# prevent issues with other modules that rely on the primary
+# device context.
+try:
+    import pycuda.autoprimaryctx
+except ModuleNotFoundError:
+    import pycuda.autoinit
+
 
 from image_batcher import ImageBatcher
 
@@ -237,8 +246,8 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--precision", default="fp16", choices=["fp32", "fp16", "int8"],
                         help="The precision mode to build in, either 'fp32', 'fp16' or 'int8', default: 'fp16'")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable more verbose log output")
-    parser.add_argument("-w", "--workspace", default=8, type=int, help="The max memory workspace size to allow in Gb, "
-                                                                       "default: 8")
+    parser.add_argument("-w", "--workspace", default=1, type=int, help="The max memory workspace size to allow in Gb, "
+                                                                       "default: 1")
     parser.add_argument("--calib_input", help="The directory holding images to use for calibration")
     parser.add_argument("--calib_cache", default="./calibration.cache",
                         help="The file path for INT8 calibration cache to use, default: ./calibration.cache")

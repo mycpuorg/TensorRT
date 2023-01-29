@@ -2,6 +2,91 @@
 
 Dates are in YYYY-MM-DD format.
 
+## v0.3.26 (2022-12-09)
+### Fixed
+- Fixed a bug where onnx node domain is lost, which is intended to be kept for some custom or user-defined node.
+
+
+## v0.3.25 (2022-10-14)
+### Added
+- Added a `should_exclude_node` parameter to `fold_constants` to allow for excluding nodes
+    from constant folding.
+
+### Fixed
+- Fixed a bug where `fold_constants` would fold quantization nodes, which are intended to be executed
+    at runtime even though they are computable beforehand.
+
+
+## v0.3.24 (2022-08-31)
+### Fixed
+- Fixed a bug where `fold_constants` would not work at all when `onnxruntime` was not installed.
+    Now, `fold_constants` can still partially fold the graph even when `onnxruntime` is not available.
+
+
+## v0.3.23 (2022-08-24)
+### Fixed
+- Fixed a bug in `fold_constants` where shape tensor cast elision would not work correctly
+    if one input of a binary op was produced by a constant node and had a data type that
+    differed from that of the other input prior to the cast.
+    For example, a pattern like this would have previously failed, but now works as expected:
+    ```
+    inp (int32)            Constant
+        |                     |
+    Cast (to=float32)   constant_out (float32)
+                   \       /
+                      Sub
+                       |
+                 Cast (to=int32)
+    ```
+- Fixed a bug where shape-tensor cast elision would invalidate the graph if the original
+    casted inputs were being used as graph outputs or by other nodes.
+
+
+## v0.3.22 (2022-08-22)
+### Changed
+- Updated `fold_constants` to issue clearer warnings and avoid evaluating tensors which exceed
+    the size threshold.
+
+
+## v0.3.21 (2022-08-19)
+### Added
+- Added a `size_threshold` option in `fold_constants` which allows for disabling constant folding
+    for nodes which would generate tensors larger than the given size.
+
+
+## v0.3.20 (2022-07-12)
+### Fixed
+- Fixed a bug where shape tensor cast elision would sometimes fail when the Cast input had a type of int64.
+- Fixed a bug where opset information would not be propagated down to nested graphs.
+
+
+## v0.3.19 (2022-04-13)
+### Added
+- Added support for flattening conditional subgraphs into the parent graph in `fold_constants()`.
+
+
+## v0.3.18 (2022-03-31)
+### Fixed
+- Fixed a bug where `{node/tensor}.{inputs/outputs} += <value>` would cause the inputs/outputs of the node/tensor
+    to be cleared.
+
+
+## v0.3.17 (2022-03-18)
+### Added
+- Added `producer_name` and `producer_version` to `Graph` class so that they are preserved during model import/export.
+
+
+## v0.3.16 (2022-02-23)
+### Fixed
+- Fixed a bug where `Graph.fold_constants()` was not providing a value for the `providers` parameter in `onnxruntime.InferenceSession`.
+
+
+## v0.3.15 (2022-01-18)
+### Fixed
+- Fixed a bug where `Graph.toposort()` would not consider implicit inputs of nodes with subgraphs.
+    For example, a graph including an `If` node whose subgraphs used tensors from the outer graph
+    may previously have been sorted such that it occurred before the nodes producing those tensors.
+
 
 ## v0.3.14 (2021-10-14)
 ### Fixed

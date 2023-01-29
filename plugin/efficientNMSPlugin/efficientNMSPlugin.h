@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,11 +19,9 @@
 
 #include <vector>
 
-#include "plugin.h"
+#include "common/plugin.h"
 #include "efficientNMSParameters.h"
 
-
-using namespace nvinfer1::plugin;
 namespace nvinfer1
 {
 namespace plugin
@@ -64,13 +63,14 @@ public:
     int enqueue(const PluginTensorDesc* inputDesc, const PluginTensorDesc* outputDesc, const void* const* inputs,
         void* const* outputs, void* workspace, cudaStream_t stream) noexcept override;
 
-private:
+protected:
     EfficientNMSParameters mParam{};
+    bool initialized{false};
     std::string mNamespace;
 };
 
 // Standard NMS Plugin Operation
-class EfficientNMSPluginCreator : public BaseCreator
+class EfficientNMSPluginCreator : public nvinfer1::pluginInternal::BaseCreator
 {
 public:
     EfficientNMSPluginCreator();
@@ -92,33 +92,11 @@ protected:
 };
 
 // ONNX NonMaxSuppression Op Compatibility
-class EfficientNMSONNXPluginCreator : public BaseCreator
+class EfficientNMSONNXPluginCreator : public nvinfer1::pluginInternal::BaseCreator
 {
 public:
     EfficientNMSONNXPluginCreator();
     ~EfficientNMSONNXPluginCreator() override = default;
-
-    const char* getPluginName() const noexcept override;
-    const char* getPluginVersion() const noexcept override;
-    const PluginFieldCollection* getFieldNames() noexcept override;
-
-    IPluginV2DynamicExt* createPlugin(const char* name, const PluginFieldCollection* fc) noexcept override;
-    IPluginV2DynamicExt* deserializePlugin(
-        const char* name, const void* serialData, size_t serialLength) noexcept override;
-
-protected:
-    PluginFieldCollection mFC;
-    EfficientNMSParameters mParam;
-    std::vector<PluginField> mPluginAttributes;
-    std::string mPluginName;
-};
-
-// TF-TRT CombinedNMS Op Compatibility
-class EfficientNMSTFTRTPluginCreator : public BaseCreator
-{
-public:
-    EfficientNMSTFTRTPluginCreator();
-    ~EfficientNMSTFTRTPluginCreator() override = default;
 
     const char* getPluginName() const noexcept override;
     const char* getPluginVersion() const noexcept override;

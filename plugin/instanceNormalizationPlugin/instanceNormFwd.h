@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,7 +25,7 @@
 
 namespace instance_norm_impl
 {
-#define CHECK_CUDA(call)                                                                                               \
+#define PLUGIN_CHECK_CUDA(call)                                                                                        \
     do                                                                                                                 \
     {                                                                                                                  \
         cudaError_t status = call;                                                                                     \
@@ -34,7 +35,7 @@ namespace instance_norm_impl
         }                                                                                                              \
     } while (0)
 
-#define CHECK_CUDNN(call)                                                                                              \
+#define PLUGIN_CHECK_CUDNN(call)                                                                                       \
     do                                                                                                                 \
     {                                                                                                                  \
         cudnnStatus_t status = call;                                                                                   \
@@ -133,7 +134,7 @@ struct InstanceNormFwdContext
 struct InstanceNormFwdParams
 {
     // The input/output tensors.
-    const void* gmem_src;
+    void const* gmem_src;
     void* gmem_dst;
     // The bias/scale.
     float* gmem_bias;
@@ -170,11 +171,11 @@ struct InstanceNormFwdParams
     float out_scale;
 };
 
-void instanceNormBufferSizesDispatch(const InstanceNormFwdContext& context, const InstanceNormFwdParams& params,
+void instanceNormBufferSizesDispatch(InstanceNormFwdContext const& context, InstanceNormFwdParams const& params,
     size_t& size_sums, size_t& size_counts, size_t& size_retired_ctas, int32_t input_data_type = 1,
     int32_t output_data_type = 1);
 
-int32_t instanceNormFwdDispatch(const InstanceNormFwdContext& context, InstanceNormFwdParams& params,
+int32_t instanceNormFwdDispatch(InstanceNormFwdContext const& context, InstanceNormFwdParams& params,
     cudaStream_t stream, int32_t input_data_type = 1, int32_t output_data_type = 1);
 
 } // namespace instance_norm_impl

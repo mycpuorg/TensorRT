@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,8 +28,8 @@ def meta(dtype):
     return TensorMetadata().add("X", dtype=dtype, shape=(4, 4)).add("Y", dtype=dtype, shape=(5, 5))
 
 
-class TestDataLoader(object):
-    @pytest.mark.parametrize("dtype", [np.int32, np.bool, np.float32, np.int64])
+class TestDataLoader:
+    @pytest.mark.parametrize("dtype", [np.int32, bool, np.float32, np.int64])
     def test_default_ranges(self, dtype):
         data_loader = DataLoader(input_metadata=meta(dtype))
         x, y = data_loader[0].values()
@@ -47,7 +48,7 @@ class TestDataLoader(object):
         feed_dict = data_loader[0]
         assert tuple(feed_dict["X"].shape) == shape
 
-    @pytest.mark.parametrize("dtype", [np.int32, np.bool, np.float32, np.int64])
+    @pytest.mark.parametrize("dtype", [np.int32, bool, np.float32, np.int64])
     @pytest.mark.parametrize("range_val", [0, 1])
     def test_range_min_max_equal(self, dtype, range_val):
         data_loader = DataLoader(input_metadata=meta(dtype), val_range=(range_val, range_val))
@@ -60,7 +61,11 @@ class TestDataLoader(object):
         [
             (0, 1, np.int32),
             (5.0, 5.5, np.float32),
-            (0, 1, np.bool),
+            (0, 1, bool),
+            (float("inf"), float("inf"), np.float32),
+            (float("-inf"), float("inf"), np.float32),
+            (0, float("inf"), np.float32),
+            (float("-inf"), 0, np.float32),
         ],
     )
     def test_val_ranges(self, range):
@@ -140,7 +145,7 @@ class TestDataLoader(object):
         assert feed_dict["X"].shape == (3,)  # Treat as a normal tensor
 
 
-class TestDataLoaderCache(object):
+class TestDataLoaderCache:
     def test_can_cast_dtype(self):
         # Ensure that the data loader can only be used once
         def load_data():

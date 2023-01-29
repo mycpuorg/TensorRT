@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,7 +16,7 @@
  */
 
 #include "multilevelCropAndResizePlugin.h"
-#include "plugin.h"
+#include "common/plugin.h"
 #include <algorithm>
 #include <cuda_runtime_api.h>
 
@@ -37,6 +38,7 @@ std::vector<PluginField> MultilevelCropAndResizePluginCreator::mPluginAttributes
 
 MultilevelCropAndResizePluginCreator::MultilevelCropAndResizePluginCreator() noexcept
 {
+    mPluginAttributes.clear();
     mPluginAttributes.emplace_back(PluginField("pooled_size", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("image_size", nullptr, PluginFieldType::kINT32, 3));
 
@@ -59,41 +61,63 @@ const PluginFieldCollection* MultilevelCropAndResizePluginCreator::getFieldNames
     return &mFC;
 }
 
-IPluginV2Ext* MultilevelCropAndResizePluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
+IPluginV2Ext* MultilevelCropAndResizePluginCreator::createPlugin(
+    const char* name, const PluginFieldCollection* fc) noexcept
 {
-    auto image_size = TLTMaskRCNNConfig::IMAGE_SHAPE;
-    const PluginField* fields = fc->fields;
-    for (int i = 0; i < fc->nbFields; ++i)
+    try
     {
-        const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "pooled_size"))
+        plugin::validateRequiredAttributesExist({"pooled_size"}, fc);
+
+        auto imageSize = TLTMaskRCNNConfig::IMAGE_SHAPE;
+        const PluginField* fields = fc->fields;
+        for (int32_t i = 0; i < fc->nbFields; ++i)
         {
-            assert(fields[i].type == PluginFieldType::kINT32);
-            mPooledSize = *(static_cast<const int*>(fields[i].data));
+            const char* attrName = fields[i].name;
+            if (!strcmp(attrName, "pooled_size"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                mPooledSize = *(static_cast<int32_t const*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "image_size"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                auto const dims = static_cast<int32_t const*>(fields[i].data);
+                std::copy_n(dims, 3, imageSize.d);
+            }
         }
-        if (!strcmp(attrName, "image_size"))
-        {
-            assert(fields[i].type == PluginFieldType::kINT32);
-            const auto dims = static_cast<const int32_t*>(fields[i].data);
-            std::copy_n(dims, 3, image_size.d);
-        }
+        return new MultilevelCropAndResize(mPooledSize, imageSize);
     }
-    return new MultilevelCropAndResize(mPooledSize, image_size);
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
-IPluginV2Ext* MultilevelCropAndResizePluginCreator::deserializePlugin(const char* name, const void* data, size_t length) noexcept
+IPluginV2Ext* MultilevelCropAndResizePluginCreator::deserializePlugin(
+    const char* name, const void* data, size_t length) noexcept
 {
-    return new MultilevelCropAndResize(data, length);
+    try
+    {
+        return new MultilevelCropAndResize(data, length);
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
-MultilevelCropAndResize::MultilevelCropAndResize(int pooled_size, const nvinfer1::Dims& image_size) noexcept
+MultilevelCropAndResize::MultilevelCropAndResize(int pooled_size, const nvinfer1::Dims& imageSize)
     : mPooledSize({pooled_size, pooled_size})
 {
 
-    assert(pooled_size > 0);
+    PLUGIN_VALIDATE(pooled_size > 0);
+    PLUGIN_VALIDATE(imageSize.nbDims == 3);
+    PLUGIN_VALIDATE(imageSize.d[0] > 0 && imageSize.d[1] > 0 && imageSize.d[2] > 0);
     // shape
-    mInputHeight = image_size.d[1];
-    mInputWidth = image_size.d[2];
+    mInputHeight = imageSize.d[1];
+    mInputWidth = imageSize.d[2];
     // Threshold to P3: Smaller -> P2
     mThresh = (224 * 224) / (4.0f);
 }
@@ -139,7 +163,15 @@ const char* MultilevelCropAndResize::getPluginVersion() const noexcept
 
 IPluginV2Ext* MultilevelCropAndResize::clone() const noexcept
 {
-    return new MultilevelCropAndResize(*this);
+    try
+    {
+        return new MultilevelCropAndResize(*this);
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 void MultilevelCropAndResize::setPluginNamespace(const char* libNamespace) noexcept
@@ -157,18 +189,18 @@ void MultilevelCropAndResize::check_valid_inputs(const nvinfer1::Dims* inputs, i
     // to be compatible with tensorflow node's input:
     // roi: [N, anchors, 4],
     // feature_map list(5 maps): p2, p3, p4, p5, p6
-    assert(nbInputDims == 1 + mFeatureMapCount);
+    PLUGIN_ASSERT(nbInputDims == 1 + mFeatureMapCount);
 
     nvinfer1::Dims rois = inputs[0];
-    assert(rois.nbDims == 2);
-    assert(rois.d[1] == 4);
+    PLUGIN_ASSERT(rois.nbDims == 2);
+    PLUGIN_ASSERT(rois.d[1] == 4);
 
     for (int i = 1; i < nbInputDims; ++i)
     {
         nvinfer1::Dims dims = inputs[i];
 
         // CHW with the same #C
-        assert(dims.nbDims == 3 && dims.d[0] == inputs[1].d[0]);
+        PLUGIN_ASSERT(dims.nbDims == 3 && dims.d[0] == inputs[1].d[0]);
     }
 }
 
@@ -176,7 +208,7 @@ Dims MultilevelCropAndResize::getOutputDimensions(int index, const Dims* inputs,
 {
 
     check_valid_inputs(inputs, nbInputDims);
-    assert(index == 0);
+    PLUGIN_ASSERT(index == 0);
 
     nvinfer1::Dims result;
     result.nbDims = 4;
@@ -205,7 +237,7 @@ int32_t MultilevelCropAndResize::enqueue(
 
         pooled, mPooledSize, mPrecision);
 
-    assert(status == cudaSuccess);
+    PLUGIN_ASSERT(status == cudaSuccess);
     return 0;
 }
 
@@ -230,10 +262,10 @@ void MultilevelCropAndResize::serialize(void* buffer) const noexcept
         write(d, mFeatureSpatialSize[i].x);
     }
     write(d, mPrecision);
-    assert(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
-MultilevelCropAndResize::MultilevelCropAndResize(const void* data, size_t length) noexcept
+MultilevelCropAndResize::MultilevelCropAndResize(const void* data, size_t length)
 {
     const char *d = reinterpret_cast<const char*>(data), *a = d;
     mPooledSize = {read<int>(d), read<int>(d)};
@@ -249,7 +281,7 @@ MultilevelCropAndResize::MultilevelCropAndResize(const void* data, size_t length
     }
     mPrecision = read<DataType>(d);
 
-    assert(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 // Return the DataType of the plugin output at the requested index
@@ -282,11 +314,11 @@ void MultilevelCropAndResize::configurePlugin(const Dims* inputDims, int nbInput
     int nbOutputs, const DataType* inputTypes, const DataType* outputTypes, const bool* inputIsBroadcast,
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize) noexcept
 {
-    assert(supportsFormat(inputTypes[0], floatFormat));
+    PLUGIN_ASSERT(supportsFormat(inputTypes[0], floatFormat));
     check_valid_inputs(inputDims, nbInputs);
 
-    assert(nbOutputs == 1);
-    assert(nbInputs == 1 + mFeatureMapCount);
+    PLUGIN_ASSERT(nbOutputs == 1);
+    PLUGIN_ASSERT(nbInputs == 1 + mFeatureMapCount);
 
     mROICount = inputDims[0].d[0];
     mFeatureLength = inputDims[1].d[0];

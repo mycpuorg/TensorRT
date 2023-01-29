@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -47,22 +48,24 @@ using namespace sample;
 using time_point = std::chrono::time_point<std::chrono::high_resolution_clock>;
 using duration = std::chrono::duration<float>;
 
-bool printLayerInfo(const ReportingOptions& reporting, const InferenceEnvironment& iEnv)
+bool printLayerInfo(
+    ReportingOptions const& reporting, nvinfer1::ICudaEngine* engine, nvinfer1::IExecutionContext* context)
 {
     if (reporting.layerInfo)
     {
         sample::gLogInfo << "Layer Information:" << std::endl;
-        sample::gLogInfo << getLayerInformation(iEnv, nvinfer1::LayerInformationFormat::kONELINE) << std::flush;
+        sample::gLogInfo << getLayerInformation(engine, context, nvinfer1::LayerInformationFormat::kONELINE)
+                         << std::flush;
     }
     if (!reporting.exportLayerInfo.empty())
     {
         std::ofstream os(reporting.exportLayerInfo, std::ofstream::trunc);
-        os << getLayerInformation(iEnv, nvinfer1::LayerInformationFormat::kJSON) << std::flush;
+        os << getLayerInformation(engine, context, nvinfer1::LayerInformationFormat::kJSON) << std::flush;
     }
     return true;
 }
 
-void printPerformanceProfile(const ReportingOptions& reporting, const InferenceEnvironment& iEnv)
+void printPerformanceProfile(ReportingOptions const& reporting, InferenceEnvironment const& iEnv)
 {
     if (reporting.profile)
     {
@@ -74,21 +77,51 @@ void printPerformanceProfile(const ReportingOptions& reporting, const InferenceE
     }
 }
 
-void printOutput(const ReportingOptions& reporting, const InferenceEnvironment& iEnv, int32_t batch)
+namespace details
 {
+template <typename ContextType>
+void dump(std::unique_ptr<ContextType> const& context, std::unique_ptr<Bindings> const& binding, ReportingOptions const& reporting, int32_t batch)
+{
+    if (!context)
+    {
+        sample::gLogError << "Empty context! Skip printing outputs." << std::endl;
+        return;
+    }
     if (reporting.output)
     {
-        dumpOutputs(*iEnv.context.front(), *iEnv.bindings.front(), sample::gLogInfo);
+        dumpOutputs(*context, *binding, sample::gLogInfo);
     }
     if (!reporting.exportOutput.empty())
     {
-        exportJSONOutput(*iEnv.context.front(), *iEnv.bindings.front(), reporting.exportOutput, batch);
+        exportJSONOutput(*context, *binding, reporting.exportOutput, batch);
+    }
+}
+} // namespace details
+
+void printOutput(ReportingOptions const& reporting, InferenceEnvironment const& iEnv, int32_t batch)
+{
+    auto const& binding = iEnv.bindings.at(0);
+    if (!binding)
+    {
+        sample::gLogError << "Empty bindings! Skip printing outputs." << std::endl;
+        return;
+    }
+
+    if (iEnv.safe)
+    {
+        auto const& context = iEnv.safeContexts.at(0);
+        details::dump(context, binding, reporting, batch);
+    }
+    else
+    {
+        auto const& context = iEnv.contexts.at(0);
+        details::dump(context, binding, reporting, batch);
     }
 }
 
 int main(int argc, char** argv)
 {
-    const std::string sampleName = "TensorRT.trtexec";
+    std::string const sampleName = "TensorRT.trtexec";
 
     auto sampleTest = sample::gLogger.defineTest(sampleName, argc, argv);
 
@@ -112,14 +145,14 @@ int main(int argc, char** argv)
 
             if (!args.empty())
             {
-                for (const auto& arg : args)
+                for (auto const& arg : args)
                 {
                     sample::gLogError << "Unknown option: " << arg.first << " " << arg.second << std::endl;
                 }
                 failed = true;
             }
         }
-        catch (const std::invalid_argument& arg)
+        catch (std::invalid_argument const& arg)
         {
             sample::gLogError << arg.what() << std::endl;
             failed = true;
@@ -154,7 +187,7 @@ int main(int argc, char** argv)
         << "." << NV_TENSORRT_PATCH << std::endl;
     initLibNvInferPlugins(&sample::gLogger.getTRTLogger(), "");
 
-    for (const auto& pluginPath : options.system.plugins)
+    for (auto const& pluginPath : options.system.plugins)
     {
         sample::gLogInfo << "Loading supplied plugin library: " << pluginPath << std::endl;
         samplesCommon::loadLibrary(pluginPath);
@@ -172,44 +205,34 @@ int main(int argc, char** argv)
         options.build.consistency = false;
     }
 
-    InferenceEnvironment iEnv;
-    TrtUniquePtr<INetworkDefinition> networkForRefit;
-    Parser parserHoldingWeightsMem;
+    // Start engine building phase.
+    std::unique_ptr<BuildEnvironment> bEnv(new BuildEnvironment(options.build.safe, options.system.DLACore));
+
+    time_point const buildStartTime{std::chrono::high_resolution_clock::now()};
+    bool buildPass = getEngineBuildEnv(options.model, options.build, options.system, *bEnv, sample::gLogError);
+    time_point const buildEndTime{std::chrono::high_resolution_clock::now()};
+
+    if (!buildPass)
     {
-        // Scope the build phase so any held memory is released before moving to inference phase.
-        BuildEnvironment bEnv;
-        const time_point buildStartTime{std::chrono::high_resolution_clock::now()};
-        bool buildPass = getEngineBuildEnv(options.model, options.build, options.system, bEnv, sample::gLogError);
-        const time_point buildEndTime{std::chrono::high_resolution_clock::now()};
-
-        if (!buildPass)
-        {
-            sample::gLogError << "Engine set up failed" << std::endl;
-            return sample::gLogger.reportFail(sampleTest);
-        }
-
-        sample::gLogInfo << "Engine " << (options.build.load ? "loaded" : "built") << " in "
-                         << duration(buildEndTime - buildStartTime).count() << " sec." << std::endl;
-
-        std::swap(iEnv.engine, bEnv.engine);
-        std::swap(networkForRefit, bEnv.network);
-        std::swap(iEnv.serializedEngine, bEnv.serializedEngine);
-        parserHoldingWeightsMem = std::move(bEnv.parser);
-        std::swap(iEnv.safeEngine, bEnv.safeEngine);
+        sample::gLogError << "Engine set up failed" << std::endl;
+        return sample::gLogger.reportFail(sampleTest);
     }
-    iEnv.safe = options.build.safe;
 
-    if (!options.build.safe && iEnv.engine.get()->isRefittable())
+    sample::gLogInfo << "Engine " << (options.build.load ? "loaded" : "built") << " in "
+                        << duration(buildEndTime - buildStartTime).count() << " sec." << std::endl;
+
+    if (!options.build.safe && options.build.refittable)
     {
+        auto* engine = bEnv->engine.get();
         if (options.reporting.refit)
         {
-            dumpRefittable(*iEnv.engine.get());
+            dumpRefittable(*engine);
         }
         if (options.inference.timeRefit)
         {
-            if (networkForRefit.operator bool())
+            if (bEnv->network.operator bool())
             {
-                const bool success = timeRefit(*networkForRefit, *iEnv.engine);
+                bool const success = timeRefit(*bEnv->network, *engine, options.inference.threads);
                 if (!success)
                 {
                     sample::gLogError << "Engine refit failed." << std::endl;
@@ -222,30 +245,29 @@ int main(int argc, char** argv)
             }
         }
     }
-    // release resources for refit only.
-    parserHoldingWeightsMem = Parser{};
-    // network released after parser! parser destructor depends on network.
-    networkForRefit.reset();
+
+    if (options.build.buildOnly)
+    {
+        if (!options.build.safe)
+        {
+            printLayerInfo(options.reporting, bEnv->engine.get(), nullptr);
+        }
+        sample::gLogInfo << "Skipped inference phase since --buildOnly is added." << std::endl;
+        return sample::gLogger.reportPass(sampleTest);
+    }
+
+    // Start inference phase.
+    std::unique_ptr<InferenceEnvironment> iEnv(new InferenceEnvironment(*bEnv));
+
+    // Delete build environment.
+    bEnv.reset();
 
     if (options.inference.timeDeserialize)
     {
-        if (timeDeserialize(iEnv))
+        if (timeDeserialize(*iEnv))
         {
             return sample::gLogger.reportFail(sampleTest);
         }
-        return sample::gLogger.reportPass(sampleTest);
-    }
-    else
-    {
-        // Release the serialized memory when not in use before allocating bindings in order to
-        // reduce memory usage.
-        iEnv.serializedEngine.reset();
-    }
-
-    printLayerInfo(options.reporting, iEnv);
-
-    if (options.inference.skip)
-    {
         return sample::gLogger.reportPass(sampleTest);
     }
 
@@ -258,10 +280,19 @@ int main(int argc, char** argv)
         return sample::gLogger.reportFail(sampleTest);
     }
 
-    const bool profilerEnabled = options.reporting.profile || !options.reporting.exportProfile.empty();
+    bool const profilerEnabled = options.reporting.profile || !options.reporting.exportProfile.empty();
+
+    if (iEnv->safe && profilerEnabled)
+    {
+        sample::gLogError << "Safe runtime does not support --dumpProfile or --exportProfile=<file>, please use "
+                             "--verbose to print profiling info."
+                          << std::endl;
+        return sample::gLogger.reportFail(sampleTest);
+    }
+
     if (profilerEnabled && !options.inference.rerun)
     {
-        iEnv.profiler.reset(new Profiler);
+        iEnv->profiler.reset(new Profiler);
         if (options.inference.graph && (getCudaDriverVersion() < 11010 || getCudaRuntimeVersion() < 11000))
         {
             options.inference.graph = false;
@@ -271,15 +302,21 @@ int main(int argc, char** argv)
         }
     }
 
-    if (!setUpInference(iEnv, options.inference))
+    if (!setUpInference(*iEnv, options.inference, options.system))
     {
         sample::gLogError << "Inference set up failed" << std::endl;
         return sample::gLogger.reportFail(sampleTest);
     }
+
+    if (!options.build.safe)
+    {
+        printLayerInfo(options.reporting, iEnv->engine.get(), iEnv->contexts.front().get());
+    }
+
     std::vector<InferenceTrace> trace;
     sample::gLogInfo << "Starting inference" << std::endl;
 
-    if (!runInference(options.inference, iEnv, options.system.device, trace))
+    if (!runInference(options.inference, *iEnv, options.system.device, trace))
     {
         sample::gLogError << "Error occurred during inference" << std::endl;
         return sample::gLogger.reportFail(sampleTest);
@@ -287,21 +324,26 @@ int main(int argc, char** argv)
 
     if (profilerEnabled && !options.inference.rerun)
     {
-        sample::gLogWarning << "The network timing report will not be accurate due to extra synchronizations "
-                               "when profiler is enabled." << std::endl;
-        sample::gLogWarning << "Add --separateProfileRun to profile layer timing in a separate run."
-                            << std::endl;
+        sample::gLogInfo << "The e2e network timing is not reported since it is inaccurate due to the extra "
+                         << "synchronizations when the profiler is enabled." << std::endl;
+        sample::gLogInfo << "To show e2e network timing report, add --separateProfileRun to profile layer timing in a "
+                         << "separate run or remove --dumpProfile to disable the profiler."
+                         << std::endl;
+    }
+    else
+    {
+        printPerformanceReport(trace, options.reporting, static_cast<float>(options.inference.warmup),
+            options.inference.batch, sample::gLogInfo, sample::gLogWarning, sample::gLogVerbose);
     }
 
-    printPerformanceReport(trace, options.reporting, static_cast<float>(options.inference.warmup),
-        options.inference.batch, sample::gLogInfo, sample::gLogWarning, sample::gLogVerbose);
-    printOutput(options.reporting, iEnv, options.inference.batch);
+    printOutput(options.reporting, *iEnv, options.inference.batch);
 
     if (profilerEnabled && options.inference.rerun)
     {
         auto* profiler = new Profiler;
-        iEnv.profiler.reset(profiler);
-        iEnv.context.front()->setProfiler(profiler);
+        iEnv->profiler.reset(profiler);
+        iEnv->contexts.front()->setProfiler(profiler);
+        iEnv->contexts.front()->setEnqueueEmitsProfile(false);
         if (options.inference.graph && (getCudaDriverVersion() < 11010 || getCudaRuntimeVersion() < 11000))
         {
             options.inference.graph = false;
@@ -309,13 +351,13 @@ int main(int argc, char** argv)
                                    "and disabled CUDA graph."
                                 << std::endl;
         }
-        if (!runInference(options.inference, iEnv, options.system.device, trace))
+        if (!runInference(options.inference, *iEnv, options.system.device, trace))
         {
             sample::gLogError << "Error occurred during inference" << std::endl;
             return sample::gLogger.reportFail(sampleTest);
         }
     }
-    printPerformanceProfile(options.reporting, iEnv);
+    printPerformanceProfile(options.reporting, *iEnv);
 
     return sample::gLogger.reportPass(sampleTest);
 }

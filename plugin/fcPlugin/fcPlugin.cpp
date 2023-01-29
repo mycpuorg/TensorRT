@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,11 +20,10 @@
 #if CUDA_VERSION >= 10010
 
 #include "NvInfer.h"
+#include "common/serialize.hpp"
 #include "fcPlugin.h"
-#include "serialize.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <cublasLt.h>
@@ -31,6 +31,7 @@
 #include <vector>
 
 using namespace nvinfer1;
+using namespace nvinfer1::plugin;
 
 namespace bert
 {
@@ -56,7 +57,7 @@ static void printPerfStructure(const customMatmulPerf_t& perf, int const& m, int
     AlgoProps p;
     p.populate(perf.algo);
     /* Calculate GFLOPS */
-    double timeAvg = (perf.time * 1e-3) / kernelRepeats; // Convert to seconds, then divide by loops
+    double timeAvg = perf.time * 1e-3; // Convert to seconds. It has been divided by kernelRepeats in customMatmulRun().
     double gflop = (2 * static_cast<unsigned long long int>(m * n) * k) * 1e-9; // Real
 
     gLogVerbose << "Algo=" << p.algoId << " Tile=" << p.tile << " (" << matmulTileName[p.tile] << ") K=" << p.numSplitsK << " Red.Sch.=" << p.reductionScheme << " Swiz=" << p.swizzle << " Cust=" << p.customOption << " Stat=" << perf.status << " Time=" << perf.time << " WSbytes=" << perf.workspaceSize << " math=" << p.mathMode << " waves=" << perf.wavesCount << "GFlops=" << (gflop / timeAvg) << std::endl;
@@ -86,8 +87,10 @@ static cublasStatus_t customMatmulRun(cublasLtHandle_t ltHandle, // to get the c
     {
         if (heurResult.workspaceSize <= workSpaceSizeInBytes)
         {
-            cudaError_t err, err1, err2, err3;
-            err = cudaEventRecord(startEvent, stream);
+            if (cudaEventRecord(startEvent, stream) != cudaSuccess)
+            {
+                return CUBLAS_STATUS_INTERNAL_ERROR;
+            }
             for (int loop = 0; loop < kernelRepeats; loop++)
             {
                 cublasStatus_t oneRunStatus
@@ -100,26 +103,27 @@ static cublasStatus_t customMatmulRun(cublasLtHandle_t ltHandle, // to get the c
                     break;
                 }
             }
-            err1 = cudaEventRecord(stopEvent, stream);
-            err2 = cudaEventSynchronize(stopEvent);
-            float time;
-            err3 = cudaEventElapsedTime(&time, startEvent, stopEvent);
-            if ((err != cudaSuccess) || (err1 != cudaSuccess) || (err2 != cudaSuccess) || (err3 != cudaSuccess))
+            if (cudaEventRecord(stopEvent, stream) != cudaSuccess)
             {
-                algoStatus = CUBLAS_STATUS_INTERNAL_ERROR;
+                return CUBLAS_STATUS_INTERNAL_ERROR;
+            }
+            if (cudaEventSynchronize(stopEvent) != cudaSuccess)
+            {
+                return CUBLAS_STATUS_INTERNAL_ERROR;
+            }
+            float time;
+            if (cudaEventElapsedTime(&time, startEvent, stopEvent) != cudaSuccess)
+            {
+                return CUBLAS_STATUS_INTERNAL_ERROR;
             }
             // For the moment only add successful findings
-            if (algoStatus == CUBLAS_STATUS_SUCCESS)
-            {
-                perfResults.algo = algo;
-                perfResults.time = time / kernelRepeats; // Average time
-                perfResults.workspaceSize = heurResult.workspaceSize;
-                perfResults.wavesCount = heurResult.wavesCount;
-            }
+            perfResults.algo = algo;
+            perfResults.time = time / kernelRepeats; // Average time
+            perfResults.workspaceSize = heurResult.workspaceSize;
+            perfResults.wavesCount = heurResult.wavesCount;
         }
         else
         {
-
             algoStatus = CUBLAS_STATUS_NOT_SUPPORTED; // Not enough workspace
         }
     }
@@ -160,40 +164,43 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
     int algoIdA[algoIds];
     // customMatmulPerf_t perfResults[algoCombinations];
 
-    CUBLASASSERT(cublasLtMatmulPreferenceCreate(&preference));
-    CUBLASASSERT(cublasLtMatmulPreferenceSetAttribute(
+    PLUGIN_CUBLASASSERT(cublasLtMatmulPreferenceCreate(&preference));
+    PLUGIN_CUBLASASSERT(cublasLtMatmulPreferenceSetAttribute(
         preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workSpaceSize, sizeof(workSpaceSize)));
 
     const int mathMode = Ctype == CUDA_R_16F ? 1 : 0;
-    cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MATH_MODE_MASK, &mathMode, sizeof(mathMode));
+    PLUGIN_CUBLASASSERT(cublasLtMatmulPreferenceSetAttribute(
+        preference, CUBLASLT_MATMUL_PREF_MATH_MODE_MASK, &mathMode, sizeof(mathMode)));
     // Create operation descriptor; see cublasLtMatmulDescAttributes_t for details
     // about defaults; here we just need to set the transforms for A and B
 #if CUBLAS_VER_MAJOR < 11
-    CUBLASASSERT(cublasLtMatmulDescCreate(&operationDesc, computeType));
+    PLUGIN_CUBLASASSERT(cublasLtMatmulDescCreate(&operationDesc, computeType));
 #else
-    CUBLASASSERT(cublasLtMatmulDescCreate(&operationDesc, computeType, scaleType));
+    PLUGIN_CUBLASASSERT(cublasLtMatmulDescCreate(&operationDesc, computeType, scaleType));
 #endif
-    CUBLASASSERT(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
-    CUBLASASSERT(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transa)));
+    PLUGIN_CUBLASASSERT(
+        cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
+    PLUGIN_CUBLASASSERT(
+        cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transa)));
 
     // Create matrix descriptors. We are good with the details here so no need to
     // set any extra attributes
-    CUBLASASSERT(
+    PLUGIN_CUBLASASSERT(
         cublasLtMatrixLayoutCreate(&Adesc, Atype, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda));
-    CUBLASASSERT(
+    PLUGIN_CUBLASASSERT(
         cublasLtMatrixLayoutCreate(&Bdesc, Btype, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb));
-    CUBLASASSERT(cublasLtMatrixLayoutCreate(&Cdesc, Ctype, m, n, ldc));
+    PLUGIN_CUBLASASSERT(cublasLtMatrixLayoutCreate(&Cdesc, Ctype, m, n, ldc));
 
     // Request the 4 first AlgoId available for SGEMM ( computeType = scaleType =
     // Atype = Btype = Ctype = Dtype = CUDA_R_32F)
-    CUBLASASSERT(cublasLtMatmulAlgoGetIds(
+    PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoGetIds(
         ltHandle, computeType, scaleType, Atype, Btype, Ctype, Ctype, algoIds, algoIdA, &nbAlgoIds));
 
     gLogVerbose << "Number of algos" << nbAlgoIds << std::endl;
 
     // Create CUDA event to time the execution time of each algo
-    CHECK(cudaEventCreate(&startEvent, cudaEventBlockingSync));
-    CHECK(cudaEventCreate(&stopEvent, cudaEventBlockingSync));
+    PLUGIN_CUASSERT(cudaEventCreate(&startEvent, cudaEventBlockingSync));
+    PLUGIN_CUASSERT(cudaEventCreate(&stopEvent, cudaEventBlockingSync));
 
     // Loop over the Algo IDs
     for (int idx = 0; (idx < nbAlgoIds) && (algoCount < algoCombinations); idx++)
@@ -209,7 +216,8 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
         }
 
         int mathMode = -1;
-        cublasLtMatmulAlgoCapGetAttribute(&algo, CUBLASLT_ALGO_CAP_MATHMODE_IMPL, &mathMode, sizeof(mathMode), nullptr);
+        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
+            &algo, CUBLASLT_ALGO_CAP_MATHMODE_IMPL, &mathMode, sizeof(mathMode), nullptr));
         // TODO is this the right way to check that it's SGEMM?
         if (Ctype == CUDA_R_32F && mathMode == 1)
         {
@@ -218,7 +226,8 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
         }
 
         // Query the tiles enums supported by that algo
-        CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(&algo, CUBLASLT_ALGO_CAP_TILE_IDS, nullptr, 0, &sizeWritten));
+        PLUGIN_CUBLASASSERT(
+            cublasLtMatmulAlgoCapGetAttribute(&algo, CUBLASLT_ALGO_CAP_TILE_IDS, nullptr, 0, &sizeWritten));
         int nbTiles = int(sizeWritten / sizeof(int));
         int* tileA = new int[nbTiles == 0 ? 1 : nbTiles];
         if (nbTiles == 0)
@@ -230,18 +239,18 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
         int splitkSupport, redMask, swizzlingMax, customOptionMax, epilogueMask;
         // Retrieve Algo Capabilities attributes to be able to setup loop over the
         // different combinations
-        CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
+        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_TILE_IDS, tileA, sizeof(int) * nbTiles, &sizeWritten));
-        CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
+        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_SPLITK_SUPPORT, &splitkSupport, sizeof(splitkSupport), &sizeWritten));
-        CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
+        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_REDUCTION_SCHEME_MASK, &redMask, sizeof(redMask), &sizeWritten));
-        CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
+        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_CTA_SWIZZLING_SUPPORT, &swizzlingMax, sizeof(swizzlingMax), &sizeWritten));
-        CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
+        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_CUSTOM_OPTION_MAX, &customOptionMax, sizeof(customOptionMax), &sizeWritten));
 
-        CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
+        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_EPILOGUE_MASK, &epilogueMask, sizeof(epilogueMask), &sizeWritten));
 
         /* Loop over the different tiles */
@@ -250,7 +259,7 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
             /* Loop over the different custom option if any */
             for (int customOption = 0; customOption <= customOptionMax; customOption++)
             {
-                CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
+                PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
                     &algo, CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION, &customOption, sizeof(customOption)));
                 /* Loop over the CTAs swizzling support */
                 for (int k = 0; k <= swizzlingMax; k++)
@@ -265,22 +274,23 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
                     for (int l = 0; (l < (1 + splitK_trial)) && (algoCount < algoCombinations); l++)
                     {
                         /* Setup attribute of the algo to run */
-                        CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
+                        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_TILE_ID, &tileA[tileIdx], sizeof(tileA[tileIdx])));
                         int splitK_val = 0;
                         int redScheme = CUBLASLT_REDUCTION_SCHEME_NONE;
-                        CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
+                        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_SPLITK_NUM, &splitK_val, sizeof(splitK_val)));
-                        CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
+                        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING, &k, sizeof(k)));
-                        CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
+                        PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME, &redScheme, sizeof(int)));
 
                         if (l > 0)
                         { // Split-K case
                             splitK_val = splitKSequenceA[l - 1];
-                            CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(&algo, CUBLASLT_ALGO_CONFIG_SPLITK_NUM,
-                                &splitKSequenceA[l - 1], sizeof(splitKSequenceA[l - 1])));
+                            PLUGIN_CUBLASASSERT(
+                                cublasLtMatmulAlgoConfigSetAttribute(&algo, CUBLASLT_ALGO_CONFIG_SPLITK_NUM,
+                                    &splitKSequenceA[l - 1], sizeof(splitKSequenceA[l - 1])));
                             /* Going over all the reduction scheme  */
                             for (redScheme = 1; redScheme < static_cast<int>(CUBLASLT_REDUCTION_SCHEME_MASK)
                                  && (algoCount < algoCombinations);
@@ -288,7 +298,7 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
                             {
                                 if (redScheme & redMask)
                                 {
-                                    CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
+                                    PLUGIN_CUBLASASSERT(cublasLtMatmulAlgoConfigSetAttribute(
                                         &algo, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME, &redScheme, sizeof(redScheme)));
 
                                     status
@@ -338,13 +348,13 @@ void LtGemmSearch(cublasLtHandle_t ltHandle, cublasOperation_t transa, cublasOpe
     }
 
     // Descriptors are no longer needed as all GPU work was already enqueued
-    CUBLASASSERT(cublasLtMatmulPreferenceDestroy(preference));
-    CUBLASASSERT(cublasLtMatrixLayoutDestroy(Cdesc));
-    CUBLASASSERT(cublasLtMatrixLayoutDestroy(Bdesc));
-    CUBLASASSERT(cublasLtMatrixLayoutDestroy(Adesc));
-    CUBLASASSERT(cublasLtMatmulDescDestroy(operationDesc));
-    CHECK(cudaEventDestroy(startEvent));
-    CHECK(cudaEventDestroy(stopEvent));
+    PLUGIN_CUBLASASSERT(cublasLtMatmulPreferenceDestroy(preference));
+    PLUGIN_CUBLASASSERT(cublasLtMatrixLayoutDestroy(Cdesc));
+    PLUGIN_CUBLASASSERT(cublasLtMatrixLayoutDestroy(Bdesc));
+    PLUGIN_CUBLASASSERT(cublasLtMatrixLayoutDestroy(Adesc));
+    PLUGIN_CUBLASASSERT(cublasLtMatmulDescDestroy(operationDesc));
+    PLUGIN_CUASSERT(cudaEventDestroy(startEvent));
+    PLUGIN_CUASSERT(cudaEventDestroy(stopEvent));
 }
 
 FCPluginDynamic::FCPluginDynamic(const std::string name, const DataType type, const int outDim, const Weights& W)
@@ -418,8 +428,8 @@ DimsExprs FCPluginDynamic::getOutputDimensions(
 {
     try
     {
-        assert(nbInputs == 1);
-        assert(outputIndex == 0);
+        PLUGIN_ASSERT(nbInputs == 1);
+        PLUGIN_ASSERT(outputIndex == 0);
         DimsExprs ret;
         ret.nbDims = 5;
         ret.d[0] = inputs[0].d[0];
@@ -439,8 +449,8 @@ DimsExprs FCPluginDynamic::getOutputDimensions(
 bool FCPluginDynamic::supportsFormatCombination(
     int pos, const PluginTensorDesc* inOut, int nbInputs, int nbOutputs) noexcept
 {
-    assert(nbInputs == 1);
-    assert(nbOutputs == 1);
+    PLUGIN_ASSERT(nbInputs == 1);
+    PLUGIN_ASSERT(nbOutputs == 1);
 
     const PluginTensorDesc& in = inOut[pos];
     if (pos == 0)
@@ -459,16 +469,16 @@ void FCPluginDynamic::configurePlugin(
     try
     {
         // Validate input arguments
-        assert(nbOutputs == 1);
-        assert(nbInputs == 1);
-        assert(mType == inputs[0].desc.type);
+        PLUGIN_ASSERT(nbOutputs == 1);
+        PLUGIN_ASSERT(nbInputs == 1);
+        PLUGIN_ASSERT(mType == inputs[0].desc.type);
         const auto& inDims0 = inputs[0].desc.dims;
 
-        assert(inDims0.nbDims == 5);
+        PLUGIN_ASSERT(inDims0.nbDims == 5);
         mK = inDims0.d[HDIM]; // hiddensize
-        // assert(hiddenSize * mOutDim == mNumParams);
-        assert(inDims0.d[3] == 1);
-        assert(inDims0.d[4] == 1);
+        // PLUGIN_ASSERT(hiddenSize * mOutDim == mNumParams);
+        PLUGIN_ASSERT(inDims0.d[3] == 1);
+        PLUGIN_ASSERT(inDims0.d[4] == 1);
 
         // m and k are mOutDim
         // n is B*S
@@ -494,7 +504,7 @@ void FCPluginDynamic::configurePlugin(
         {
             gLogError << "Unsupported type error, expected [kHALF,kFLOAT], but received " << static_cast<int>(mType)
                       << std::endl;
-            assert(false);
+            PLUGIN_ASSERT(false);
         }
 
         gLogVerbose << "FCPluginDynamic configurePlugin m=" << mOutDim << ", n=" << mNmax << ", k=" << mK << std::endl;
@@ -550,10 +560,11 @@ int FCPluginDynamic::enqueue(const PluginTensorDesc* inputDesc, const PluginTens
     {
         const size_t workspaceSize = getWorkspaceSize(inputDesc, 1, outputDesc, 1);
 
-        const int S = inputDesc->dims.d[SDIM];
-        const int B = inputDesc->dims.d[BDIM];
-        const int n = S * B;
-        mLtContext.setN(n);
+        int32_t const S = inputDesc->dims.d[SDIM];
+        int32_t const B = inputDesc->dims.d[BDIM];
+        int32_t const n = S * B;
+        PLUGIN_ASSERT(n >= 0);
+        mLtContext.setN(static_cast<uint64_t>(n));
 
         if (mType == DataType::kFLOAT)
         {
@@ -603,9 +614,9 @@ int FCPluginDynamic::enqueue(const PluginTensorDesc* inputDesc, const PluginTens
 // IPluginV2Ext Methods
 DataType FCPluginDynamic::getOutputDataType(int index, const DataType* inputTypes, int nbInputs) const noexcept
 {
-    assert(index == 0);
-    assert(nbInputs == 1);
-    assert(inputTypes[0] == DataType::kFLOAT || inputTypes[0] == DataType::kHALF);
+    PLUGIN_ASSERT(index == 0);
+    PLUGIN_ASSERT(nbInputs == 1);
+    PLUGIN_ASSERT(inputTypes[0] == DataType::kFLOAT || inputTypes[0] == DataType::kHALF);
     return inputTypes[0];
 }
 
@@ -687,6 +698,7 @@ const char* FCPluginDynamic::getPluginNamespace() const noexcept
 
 FCPluginDynamicCreator::FCPluginDynamicCreator()
 {
+    mPluginAttributes.clear();
     mPluginAttributes.emplace_back(PluginField("out_dims", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("type_id", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("W", nullptr, PluginFieldType::kFLOAT32, 1));
@@ -716,11 +728,12 @@ IPluginV2* FCPluginDynamicCreator::createPlugin(const char* name, const PluginFi
     {
         gLogVerbose << "Creating FCPluginDynamicCreator...\n";
 
-        int outDims = 0;
-        int typeId = -1;
+        int32_t outDims = 0;
+        int32_t typeId = -1;
         Weights W{DataType::kFLOAT, nullptr, 0ll};
+        plugin::validateRequiredAttributesExist({"out_dims", "type_id", "W"}, fc);
 
-        for (int i = 0; i < fc->nbFields; i++)
+        for (int32_t i = 0; i < fc->nbFields; i++)
         {
             std::string field_name(fc->fields[i].name);
             if (field_name.compare("out_dims") == 0)

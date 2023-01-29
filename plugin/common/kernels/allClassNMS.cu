@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,15 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "kernel.h"
-#include "bboxUtils.h"
+#include "common/bboxUtils.h"
+#include "common/kernel.h"
 #include "cuda_fp16.h"
 #include <array>
+using namespace nvinfer1;
 
 template <typename T_BBOX>
-__device__ float bboxSize(
-    const Bbox<T_BBOX>& bbox,
-    const bool normalized)
+__device__ float bboxSize(const Bbox<T_BBOX>& bbox, const bool normalized)
 {
     if (float(bbox.xmax) < float(bbox.xmin) || float(bbox.ymax) < float(bbox.ymin))
     {
@@ -121,9 +121,7 @@ __device__ Bbox<__half> getDiagonalMinMaxSortedBox(const Bbox<__half>& bbox1)
 
 template <typename T_BBOX>
 __device__ float jaccardOverlap(
-    const Bbox<T_BBOX>& bbox1,
-    const Bbox<T_BBOX>& bbox2,
-    const bool normalized)
+    const Bbox<T_BBOX>& bbox1, const Bbox<T_BBOX>& bbox2, const bool normalized, const bool caffeSemantics)
 {
     Bbox<T_BBOX> intersect_bbox;
 
@@ -131,8 +129,11 @@ __device__ float jaccardOverlap(
     Bbox<T_BBOX> localbbox2 = getDiagonalMinMaxSortedBox(bbox2);
 
     intersectBbox(localbbox1, localbbox2, &intersect_bbox);
+
     float intersect_width, intersect_height;
-    if (normalized)
+    // Only when using Caffe semantics, IOU calculation adds "1" to width and height if bbox is not normalized.
+    // https://github.com/weiliu89/caffe/blob/ssd/src/caffe/util/bbox_util.cpp#L92-L97
+    if (normalized || !caffeSemantics)
     {
         intersect_width = float(intersect_bbox.xmax) - float(intersect_bbox.xmin);
         intersect_height = float(intersect_bbox.ymax) - float(intersect_bbox.ymin);
@@ -167,36 +168,29 @@ __device__ void emptyBboxInfo(
 /********** new NMS for only score and index array **********/
 
 template <typename T_SCORE, typename T_BBOX, int TSIZE>
-__global__ void allClassNMS_kernel(
-    const int num,
-    const int num_classes,
-    const int num_preds_per_class,
-    const int top_k,
-    const float nms_threshold,
-    const bool share_location,
-    const bool isNormalized,
+__global__ void allClassNMS_kernel(const int num, const int num_classes, const int num_preds_per_class, const int top_k,
+    const float nms_threshold, const bool share_location, const bool isNormalized,
     T_BBOX* bbox_data, // bbox_data should be float to preserve location information
-    T_SCORE* beforeNMS_scores,
-    int* beforeNMS_index_array,
-    T_SCORE* afterNMS_scores,
-    int* afterNMS_index_array,
-    bool flipXY,
-    const float score_shift)
+    T_SCORE* beforeNMS_scores, int* beforeNMS_index_array, T_SCORE* afterNMS_scores, int* afterNMS_index_array,
+    bool flipXY, const float score_shift, bool caffeSemantics)
 {
     //__shared__ bool kept_bboxinfo_flag[CAFFE_CUDA_NUM_THREADS * TSIZE];
     extern __shared__ bool kept_bboxinfo_flag[];
 
     for (int i = 0; i < num; i++)
     {
-        const int offset = i * num_classes * num_preds_per_class + blockIdx.x * num_preds_per_class;
-        const int max_idx = offset + top_k; // put top_k bboxes into NMS calculation
-        const int bbox_idx_offset = share_location ? (i * num_preds_per_class) : (i * num_classes * num_preds_per_class);
+        int32_t const offset = i * num_classes * num_preds_per_class + blockIdx.x * num_preds_per_class;
+        // Should not write data beyond [offset, top_k).
+        int32_t const max_idx = offset + top_k;
+        // Should not read beyond [offset, num_preds_per_class).
+        int32_t const max_read_idx = offset + min(top_k, num_preds_per_class);
+        int32_t const bbox_idx_offset = i * num_preds_per_class * (share_location ? 1 : num_classes);
 
         // local thread data
         int loc_bboxIndex[TSIZE];
         Bbox<T_BBOX> loc_bbox[TSIZE];
 
-// initialize Bbox, Bboxinfo, kept_bboxinfo_flag
+        // initialize Bbox, Bboxinfo, kept_bboxinfo_flag
         // Eliminate shared memory RAW hazard
         __syncthreads();
 #pragma unroll
@@ -204,10 +198,18 @@ __global__ void allClassNMS_kernel(
         {
             const int cur_idx = threadIdx.x + blockDim.x * t;
             const int item_idx = offset + cur_idx;
-
+            // Init all output data
             if (item_idx < max_idx)
             {
-                loc_bboxIndex[t] = beforeNMS_index_array[item_idx];
+                // Do not access data if it exceeds read boundary
+                if (item_idx < max_read_idx)
+                {
+                    loc_bboxIndex[t] = beforeNMS_index_array[item_idx];
+                }
+                else
+                {
+                    loc_bboxIndex[t] = -1;
+                }
 
                 if (loc_bboxIndex[t] != -1)
                 {
@@ -232,9 +234,15 @@ __global__ void allClassNMS_kernel(
 
         // filter out overlapped boxes with lower scores
         int ref_item_idx = offset;
-        int ref_bbox_idx = share_location ? (beforeNMS_index_array[ref_item_idx] % num_preds_per_class + bbox_idx_offset) : beforeNMS_index_array[ref_item_idx];
 
-        while ((ref_bbox_idx != -1) && ref_item_idx < max_idx)
+        int32_t ref_bbox_idx = -1;
+        if (ref_item_idx < max_read_idx)
+        {
+            ref_bbox_idx = share_location
+                ? (beforeNMS_index_array[ref_item_idx] % num_preds_per_class + bbox_idx_offset)
+                : beforeNMS_index_array[ref_item_idx];
+        }
+        while ((ref_bbox_idx != -1) && ref_item_idx < max_read_idx)
         {
             Bbox<T_BBOX> ref_bbox;
             ref_bbox.xmin = flipXY ? bbox_data[ref_bbox_idx * 4 + 1] : bbox_data[ref_bbox_idx * 4 + 0];
@@ -252,8 +260,7 @@ __global__ void allClassNMS_kernel(
 
                 if ((kept_bboxinfo_flag[cur_idx]) && (item_idx > ref_item_idx))
                 {
-                    // TODO: may need to add bool normalized as argument, HERE true means normalized
-                    if (jaccardOverlap(ref_bbox, loc_bbox[t], isNormalized) > nms_threshold)
+                    if (jaccardOverlap(ref_bbox, loc_bbox[t], isNormalized, caffeSemantics) > nms_threshold)
                     {
                         kept_bboxinfo_flag[cur_idx] = false;
                     }
@@ -264,9 +271,15 @@ __global__ void allClassNMS_kernel(
             do
             {
                 ref_item_idx++;
-            } while (ref_item_idx < max_idx && !kept_bboxinfo_flag[ref_item_idx - offset]);
+            } while (ref_item_idx < max_read_idx && !kept_bboxinfo_flag[ref_item_idx - offset]);
 
-            ref_bbox_idx = share_location ? (beforeNMS_index_array[ref_item_idx] % num_preds_per_class + bbox_idx_offset) : beforeNMS_index_array[ref_item_idx];
+            // Move to next valid point
+            if (ref_item_idx < max_read_idx)
+            {
+                ref_bbox_idx = share_location
+                    ? (beforeNMS_index_array[ref_item_idx] % num_preds_per_class + bbox_idx_offset)
+                    : beforeNMS_index_array[ref_item_idx];
+            }
         }
 
         // store data
@@ -290,66 +303,42 @@ __global__ void allClassNMS_kernel(
 }
 
 template <typename T_SCORE, typename T_BBOX>
-pluginStatus_t allClassNMS_gpu(
-    cudaStream_t stream,
-    const int num,
-    const int num_classes,
-    const int num_preds_per_class,
-    const int top_k,
-    const float nms_threshold,
-    const bool share_location,
-    const bool isNormalized,
-    void* bbox_data,
-    void* beforeNMS_scores,
-    void* beforeNMS_index_array,
-    void* afterNMS_scores,
-    void* afterNMS_index_array,
-    bool flipXY,
-    const float score_shift)
+pluginStatus_t allClassNMS_gpu(cudaStream_t stream, const int num, const int num_classes, const int num_preds_per_class,
+    const int top_k, const float nms_threshold, const bool share_location, const bool isNormalized, void* bbox_data,
+    void* beforeNMS_scores, void* beforeNMS_index_array, void* afterNMS_scores, void* afterNMS_index_array, bool flipXY,
+    const float score_shift, bool caffeSemantics)
 {
 #define P(tsize) allClassNMS_kernel<T_SCORE, T_BBOX, (tsize)>
 
-    void (*kernel[8])(const int, const int, const int, const int, const float,
-                      const bool, const bool, T_BBOX*, T_SCORE*, int*, T_SCORE*,
-                      int*, bool, const float)
+    void (*kernel[8])(const int, const int, const int, const int, const float, const bool, const bool, T_BBOX*,
+        T_SCORE*, int*, T_SCORE*, int*, bool, const float, bool)
         = {
-            P(1), P(2), P(3), P(4), P(5), P(6), P(7), P(8),
+            P(1),
+            P(2),
+            P(3),
+            P(4),
+            P(5),
+            P(6),
+            P(7),
+            P(8),
         };
 
     const int BS = 512;
     const int GS = num_classes;
     const int t_size = (top_k + BS - 1) / BS;
 
-    kernel[t_size - 1]<<<GS, BS, BS * t_size * sizeof(bool), stream>>>(num, num_classes, num_preds_per_class,
-                                                                       top_k, nms_threshold, share_location, isNormalized,
-                                                                       (T_BBOX*) bbox_data,
-                                                                       (T_SCORE*) beforeNMS_scores,
-                                                                       (int*) beforeNMS_index_array,
-                                                                       (T_SCORE*) afterNMS_scores,
-                                                                       (int*) afterNMS_index_array,
-                                                                       flipXY,
-                                                                       score_shift);
+    kernel[t_size - 1]<<<GS, BS, BS * t_size * sizeof(bool), stream>>>(num, num_classes, num_preds_per_class, top_k,
+        nms_threshold, share_location, isNormalized, (T_BBOX*) bbox_data, (T_SCORE*) beforeNMS_scores,
+        (int*) beforeNMS_index_array, (T_SCORE*) afterNMS_scores, (int*) afterNMS_index_array, flipXY, score_shift,
+        caffeSemantics);
 
     CSC(cudaGetLastError(), STATUS_FAILURE);
     return STATUS_SUCCESS;
 }
 
 // allClassNMS LAUNCH CONFIG
-typedef pluginStatus_t (*nmsFunc)(cudaStream_t,
-                               const int,
-                               const int,
-                               const int,
-                               const int,
-                               const float,
-                               const bool,
-                               const bool,
-                               void*,
-                               void*,
-                               void*,
-                               void*,
-                               void*,
-                               bool,
-                               const float);
+typedef pluginStatus_t (*nmsFunc)(cudaStream_t, const int, const int, const int, const int, const float, const bool,
+    const bool, void*, void*, void*, void*, void*, bool, const float, bool);
 
 struct nmsLaunchConfigSSD
 {
@@ -360,6 +349,7 @@ struct nmsLaunchConfigSSD
     nmsLaunchConfigSSD(DataType t_score, DataType t_bbox)
         : t_score(t_score)
         , t_bbox(t_bbox)
+        , function(nullptr)
     {
     }
     nmsLaunchConfigSSD(DataType t_score, DataType t_bbox, nmsFunc function)
@@ -379,23 +369,11 @@ static std::array<nmsLaunchConfigSSD, 2> nmsSsdLCOptions = {
     nmsLaunchConfigSSD(DataType::kHALF, DataType::kHALF, allClassNMS_gpu<__half, __half>)
 };
 
-pluginStatus_t allClassNMS(cudaStream_t stream,
-                        const int num,
-                        const int num_classes,
-                        const int num_preds_per_class,
-                        const int top_k,
-                        const float nms_threshold,
-                        const bool share_location,
-                        const bool isNormalized,
-                        const DataType DT_SCORE,
-                        const DataType DT_BBOX,
-                        void* bbox_data,
-                        void* beforeNMS_scores,
-                        void* beforeNMS_index_array,
-                        void* afterNMS_scores,
-                        void* afterNMS_index_array,
-                        bool flipXY,
-                        const float score_shift)
+pluginStatus_t allClassNMS(cudaStream_t stream, const int num, const int num_classes, const int num_preds_per_class,
+    const int top_k, const float nms_threshold, const bool share_location, const bool isNormalized,
+    const DataType DT_SCORE, const DataType DT_BBOX, void* bbox_data, void* beforeNMS_scores,
+    void* beforeNMS_index_array, void* afterNMS_scores, void* afterNMS_index_array, bool flipXY,
+    const float score_shift, bool caffeSemantics)
 {
     nmsLaunchConfigSSD lc = nmsLaunchConfigSSD(DT_SCORE, DT_BBOX);
     for (unsigned i = 0; i < nmsSsdLCOptions.size(); ++i)
@@ -403,21 +381,9 @@ pluginStatus_t allClassNMS(cudaStream_t stream,
         if (lc == nmsSsdLCOptions[i])
         {
             DEBUG_PRINTF("all class nms kernel %d\n", i);
-            return nmsSsdLCOptions[i].function(stream,
-                                          num,
-                                          num_classes,
-                                          num_preds_per_class,
-                                          top_k,
-                                          nms_threshold,
-                                          share_location,
-                                          isNormalized,
-                                          bbox_data,
-                                          beforeNMS_scores,
-                                          beforeNMS_index_array,
-                                          afterNMS_scores,
-                                          afterNMS_index_array,
-                                          flipXY,
-                                          score_shift);
+            return nmsSsdLCOptions[i].function(stream, num, num_classes, num_preds_per_class, top_k, nms_threshold,
+                share_location, isNormalized, bbox_data, beforeNMS_scores, beforeNMS_index_array, afterNMS_scores,
+                afterNMS_index_array, flipXY, score_shift, caffeSemantics);
         }
     }
     return STATUS_BAD_PARAM;

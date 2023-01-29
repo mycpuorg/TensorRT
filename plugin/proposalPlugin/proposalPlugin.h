@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,12 +19,10 @@
 #define PROPOSAL_PLUGIN_H
 
 #include "NvInferPlugin.h"
-#include "kernel.h"
-#include "plugin.h"
+#include "common/kernel.h"
+#include "common/plugin.h"
 #include <string>
 #include <vector>
-
-using namespace nvinfer1::plugin;
 
 // One of the preferred ways of making TensorRT to be able to see
 // our custom layer requires extending IPluginV2Ext and BaseCreator classes.
@@ -38,13 +37,13 @@ class ProposalPlugin : public IPluginV2Ext
 public:
     ProposalPlugin(int input_height, int input_width, int rpn_height, int rpn_width, float rpn_std_scaling,
         int rpn_stride, float bbox_min_size, float nms_iou_threshold, int pre_nms_top_n, int max_box_num,
-        const float* anchor_sizes, int anc_size_num, const float* anchor_ratios, int anc_ratio_num) noexcept;
+        const float* anchor_sizes, int anc_size_num, const float* anchor_ratios, int anc_ratio_num);
 
     ProposalPlugin(int input_height, int input_width, float rpn_std_scaling, int rpn_stride, float bbox_min_size,
         float nms_iou_threshold, int pre_nms_top_n, int max_box_num, const float* anchor_sizes, int anc_size_num,
-        const float* anchor_ratios, int anc_ratio_num) noexcept;
+        const float* anchor_ratios, int anc_ratio_num);
 
-    ProposalPlugin(const void* serial_buf, size_t serial_size) noexcept;
+    ProposalPlugin(const void* serial_buf, size_t serial_size);
 
     // It doesn't make sense to make ProposalPlugin without arguments, so we delete default constructor.
     ProposalPlugin() noexcept = delete;
@@ -121,13 +120,13 @@ class ProposalDynamicPlugin : public IPluginV2DynamicExt
 public:
     ProposalDynamicPlugin(int input_height, int input_width, int rpn_height, int rpn_width, float rpn_std_scaling,
         int rpn_stride, float bbox_min_size, float nms_iou_threshold, int pre_nms_top_n, int max_box_num,
-        const float* anchor_sizes, int anc_size_num, const float* anchor_ratios, int anc_ratio_num) noexcept;
+        const float* anchor_sizes, int anc_size_num, const float* anchor_ratios, int anc_ratio_num);
 
     ProposalDynamicPlugin(int input_height, int input_width, float rpn_std_scaling, int rpn_stride, float bbox_min_size,
         float nms_iou_threshold, int pre_nms_top_n, int max_box_num, const float* anchor_sizes, int anc_size_num,
-        const float* anchor_ratios, int anc_ratio_num) noexcept;
+        const float* anchor_ratios, int anc_ratio_num);
 
-    ProposalDynamicPlugin(const void* serial_buf, size_t serial_size) noexcept;
+    ProposalDynamicPlugin(const void* serial_buf, size_t serial_size);
 
     // It doesn't make sense to make ProposalDynamicPlugin without arguments, so we delete default constructor.
     ProposalDynamicPlugin() noexcept = delete;
@@ -180,7 +179,7 @@ private:
     size_t mAnchorRatioNum;
 };
 
-class ProposalBasePluginCreator : public BaseCreator
+class ProposalBasePluginCreator : public nvinfer1::pluginInternal::BaseCreator
 {
 public:
     ProposalBasePluginCreator() noexcept;

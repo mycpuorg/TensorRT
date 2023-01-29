@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -30,12 +31,15 @@ static constexpr int32_t kSM_XAVIER = 72;
 static constexpr int32_t kSM_TURING = 75;
 static constexpr int32_t kSM_AMPERE_100 = 80;
 static constexpr int32_t kSM_AMPERE_10X = 86;
+static constexpr int32_t kSM_AMPERE_10B = 87;
+static constexpr int32_t kSM_ADA_10X = 89;
+static constexpr int32_t kSM_HOPPER_100 = 90;
 
 class QKVToContextInterleavedPlugin : public nvinfer1::IPluginV2DynamicExt
 {
 public:
     QKVToContextInterleavedPlugin(
-        const std::string name, const int hiddenSize, const int numHeads, const float dqProbs);
+        std::string const name, int const hiddenSize, int const numHeads, float const dqProbs, bool const useInt8ScaleMax);
 
     QKVToContextInterleavedPlugin(const std::string name, const void* data, size_t length);
 
@@ -90,6 +94,7 @@ private:
     const FusedMultiHeadAttentionXMMAKernelV2* mXmmaKernel;
 
     float mDqProbs;
+    bool mUseInt8ScaleMax{true};
 };
 
 class QKVToContextInterleavedPluginCreator : public nvinfer1::IPluginCreator

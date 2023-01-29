@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -84,7 +85,7 @@ class ImageBatcher:
         if self.num_images < 1:
             print("Not enough images to create batches")
             sys.exit(1)
-        self.images = self.images[0:self.num_images]
+        self.images = self.images[0 : self.num_images]
 
         # Subdivide the list of images into batches
         self.num_batches = 1 + int((self.num_images - 1) / self.batch_size)
@@ -127,7 +128,7 @@ class ImageBatcher:
             return image.crop((x, y, x + crop_size, y + crop_size))
 
         image = Image.open(image_path)
-        image = image.convert(mode='RGB')
+        image = image.convert(mode="RGB")
         if self.preprocessor == "V2":
             # For EfficientNet V2: Bilinear Resize and [-1,+1] Normalization
             if self.height < 320:

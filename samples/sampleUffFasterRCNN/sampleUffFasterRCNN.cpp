@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -249,7 +250,6 @@ bool SampleUffFasterRcnn::constructNetwork(SampleUniquePtr<nvinfer1::IBuilder>& 
     }
 
     builder->setMaxBatchSize(mParams.batchSize);
-    config->setMaxWorkspaceSize(2_GiB);
 
     if (mParams.dlaCore >= 0)
     {
@@ -514,7 +514,7 @@ void printHelpInfo()
     std::cout << "=== Required Arguments ===" << std::endl;
     std::cout << "--inputHeight[-H]       Specify the input height of the model." << std::endl;
     std::cout << "--inputWidth[-W]        Specify the input width of the model." << std::endl;
-    std::cout << "--inputImages[-I]       Comma-seperated list of input images to use for inference." << std::endl;
+    std::cout << "--inputImages[-I]       Comma-separated list of input images to use for inference." << std::endl;
     std::cout << "=== Optional Arguments ===" << std::endl;
     std::cout << "--help[-h]              Display help information and exit" << std::endl;
     std::cout << "--datadir[-d]           Specify path to a data directory, overriding "

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,10 +19,12 @@
 #define TENSORRT_LOGGING_H
 
 #include "NvInferRuntimeCommon.h"
+#include "sampleOptions.h"
 #include <cassert>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -123,6 +126,7 @@ public:
     }
 
 protected:
+    std::mutex mLogMutex;
     LogStreamConsumerBuffer mBuffer;
 }; // class LogStreamConsumerBase
 
@@ -169,6 +173,16 @@ public:
         mBuffer.setShouldLog(mShouldLog);
     }
 
+    std::mutex& getMutex()
+    {
+        return mLogMutex;
+    }
+
+    bool getShouldLog() const
+    {
+        return mShouldLog;
+    }
+
 private:
     static std::ostream& severityOstream(Severity severity)
     {
@@ -191,6 +205,46 @@ private:
     bool mShouldLog;
     Severity mSeverity;
 }; // class LogStreamConsumer
+
+template <typename T>
+LogStreamConsumer& operator<<(LogStreamConsumer& logger, const T& obj)
+{
+    if (logger.getShouldLog())
+    {
+        std::lock_guard<std::mutex> guard(logger.getMutex());
+        auto& os = static_cast<std::ostream&>(logger);
+        os << obj;
+    }
+    return logger;
+}
+
+//!
+//! Special handling std::endl
+//!
+inline LogStreamConsumer& operator<<(LogStreamConsumer& logger, std::ostream& (*f)(std::ostream&) )
+{
+    if (logger.getShouldLog())
+    {
+        std::lock_guard<std::mutex> guard(logger.getMutex());
+        auto& os = static_cast<std::ostream&>(logger);
+        os << f;
+    }
+    return logger;
+}
+
+inline LogStreamConsumer& operator<<(LogStreamConsumer& logger, const nvinfer1::Dims& dims)
+{
+    if (logger.getShouldLog())
+    {
+        std::lock_guard<std::mutex> guard(logger.getMutex());
+        auto& os = static_cast<std::ostream&>(logger);
+        for (int32_t i = 0; i < dims.nbDims; ++i)
+        {
+            os << (i ? "x" : "") << dims.d[i];
+        }
+    }
+    return logger;
+}
 
 //!
 //! \class Logger

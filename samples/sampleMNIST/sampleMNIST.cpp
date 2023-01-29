@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -96,7 +97,7 @@ private:
     nvinfer1::Dims mInputDims; //!< The dimensions of the input to the network.
 
     SampleUniquePtr<nvcaffeparser1::IBinaryProtoBlob>
-        mMeanBlob; //! the mean blob, which we need to keep around until build is done
+        mMeanBlob; //!< the mean blob, which we need to keep around until build is done
 };
 
 //!
@@ -105,7 +106,7 @@ private:
 //! \details This function creates the MNIST network by parsing the caffe model and builds
 //!          the engine that will be used to run MNIST (mEngine)
 //!
-//! \return Returns true if the engine was created successfully and false otherwise
+//! \return true if the engine was created successfully and false otherwise
 //!
 bool SampleMNIST::build()
 {
@@ -139,7 +140,6 @@ bool SampleMNIST::build()
     }
 
     builder->setMaxBatchSize(mParams.batchSize);
-    config->setMaxWorkspaceSize(16_MiB);
     config->setFlag(BuilderFlag::kGPU_FALLBACK);
     if (mParams.fp16)
     {
@@ -344,10 +344,10 @@ bool SampleMNIST::infer()
     buffers.copyOutputToHostAsync(stream);
 
     // Wait for the work in the stream to complete
-    cudaStreamSynchronize(stream);
+    CHECK(cudaStreamSynchronize(stream));
 
     // Release stream
-    cudaStreamDestroy(stream);
+    CHECK(cudaStreamDestroy(stream));
 
     // Check and print the output of the inference
     // There should be just one output tensor
@@ -375,12 +375,12 @@ bool SampleMNIST::teardown()
 samplesCommon::CaffeSampleParams initializeSampleParams(const samplesCommon::Args& args)
 {
     samplesCommon::CaffeSampleParams params;
-    if (args.dataDirs.empty()) //!< Use default directories if user hasn't provided directory paths
+    if (args.dataDirs.empty()) // Use default directories if user hasn't provided directory paths
     {
         params.dataDirs.push_back("data/mnist/");
         params.dataDirs.push_back("data/samples/mnist/");
     }
-    else //!< Use the data directory provided by the user
+    else // Use the data directory provided by the user
     {
         params.dataDirs = args.dataDirs;
     }

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -30,8 +31,8 @@
 #define dllGetSym(handle, name) dlsym(handle, name)
 #endif
 
+#include "common/plugin.h"
 #include "cudaDriverWrapper.h"
-#include "plugin.h"
 #include <cstdint>
 #include <cstdio>
 #include <cuda.h>
@@ -41,11 +42,11 @@ using namespace nvinfer1;
 CUDADriverWrapper::CUDADriverWrapper()
 {
     handle = dllOpen(CUDA_LIB_NAME);
-    ASSERT(handle != nullptr);
+    PLUGIN_ASSERT(handle != nullptr);
 
-    auto load_sym = [](void* handle, const char *name) {
+    auto load_sym = [](void* handle, const char* name) {
         void* ret = dllGetSym(handle, name);
-        ASSERT(ret != nullptr);
+        PLUGIN_ASSERT(ret != nullptr);
         return ret;
     };
 

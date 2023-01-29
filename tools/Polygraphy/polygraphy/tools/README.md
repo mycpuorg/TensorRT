@@ -8,12 +8,10 @@
     - [Converting A Model To TensorRT](#converting-a-model-to-tensorrt)
     - [Sanitizing An ONNX Model](#sanitizing-an-onnx-model)
     - [Comparing A Model Between Frameworks](#comparing-a-model-between-frameworks)
-    - [Using Custom Input Data](#using-custom-input-data)
     - [Modifying Input Shapes In An ONNX Model](#modifying-input-shapes-in-an-onnx-model)
 - [Advanced Topics](#advanced-topics)
     - [Deterministic Engine Builds](#deterministic-engine-builds)
-    - [Defining A Custom TensorRT Network](#defining-a-custom-tensorrt-network)
-    - [Defining A Custom TensorRT Builder Configuration](#defining-a-custom-tensorrt-builder-configuration)
+    - [Defining A Custom TensorRT Network Or Builder Configuration](#defining-a-custom-tensorrt-network-or-builder-configuration)
     - [Extracting A Subgraph Of An ONNX Model](#extracting-a-subgraph-of-an-onnx-model)
     - [Debugging Intermittent TensorRT Failures](#debugging-intermittent-tensorrt-failures)
     - [Reducing Failing ONNX Models](#reducing-failing-onnx-models)
@@ -28,12 +26,12 @@ and debugging use-cases. This guide provides a broad overview of the capabilitie
 
 For more information about a specific tool, see the README in the corresponding directory here.
 
-Note that some of the tools included are still experimental. Any tool labeled `[EXPERIMENTAL]`
-may be subject to backwards-incompatible changes, or even complete removal at any point in time.
+All the tools provided by Polygraphy can be invoked using the polygraphy binary: `polygraphy`.
 
-All the tools provided by Polygraphy can be invoked using the polygraphy binary: [`bin/polygraphy`](../../bin/polygraphy).
-For usage information on a specific tool, you can see the help output with: `polygraphy <subtool> -h`
+For usage information on a specific tool, you can refer to the help output with: `polygraphy <subtool> -h`.
 
+*NOTE: Some of the tools included are still experimental. Any tool labeled `[EXPERIMENTAL]`*
+*may be subject to backwards-incompatible changes, or even complete removal at any point in time.*
 
 ## Common Use-Cases
 
@@ -93,27 +91,6 @@ For more information, refer to the examples, which, among other things, show how
 You can find the complete listing of `run` examples [here](../../examples/cli/run/).
 
 
-### Using Custom Input Data
-
-For any tools that use inference input data, such as `run` or `convert`, Polygraphy
-provides 2 ways to supply custom input data:
-
-1. `--load-input-data`, which takes a path to a JSON file containing a `List[Dict[str, np.ndarray]]`.
-    This will cause Polygraphy to load the entire object into memory.
-    *NOTE: This may be impractical or impossible if the data is very large.*
-
-2. `--data-loader-script`, which takes a path to a Python script that defines a `load_data` function
-    that returns a data loader. The data loader can be any iterable or generator that yields
-    `Dict[str, np.ndarray]`. By using a generator, we can avoid loading all the data
-    at once, and instead limit it to just a single input at a time.
-
-    *TIP: If you have an existing script that already defines such a function, you do **not** need to create*
-        *a separate script just for the sake of `--data-loader-script`. You can simply use the existing script*
-        *and optionally use the `--data-loader-func-name` argument to specify the name of the function if it's not `load_data`*
-
-For more information, refer to [`run` example 05](../../examples/cli/run/05_comparing_with_custom_data/).
-
-
 ### Modifying Input Shapes In An ONNX Model
 
 The best way to modify input shapes in an ONNX model is to re-export the model with
@@ -137,24 +114,18 @@ for an engine and reload them during subsequent builds.
 For more information, refer to [`convert` example 02](../../examples/cli/convert/02_deterministic_engine_builds_in_tensorrt/).
 
 
-### Defining A Custom TensorRT Network
+### Defining A Custom TensorRT Network Or Builder Configuration
 
 Many of the command-line tools involve creating TensorRT networks. Most of the time, networks
 are created by parsing a model from a framework (generally in ONNX format). However, it
 is also possible to define the TensorRT network manually using a Python script.
 
 This is useful if you want to modify the network in some way using the TensorRT Python
-API; for example, setting layer precisions, or per-layer device preferences.
+API; For example, setting layer precisions, or per-layer device preferences.
 
-For more information, refer to [`run` example 04](../../examples/cli/run/04_defining_a_tensorrt_network_or_config_manually).
+Similarly, it is also possible to provide a custom builder configuration.
 
-
-### Defining A Custom TensorRT Builder Configuration
-
-Similar to defining custom TensorRT networks, it is possible to provide custom
-TensorRT builder configurations on the command-line using a Python script.
-
-This is useful when Polygraphy does not support certain TensorRT builder configuration options.
+This is useful in cases where Polygraphy may not yet support certain TensorRT builder configuration options.
 
 For more information, refer to [`run` example 04](../../examples/cli/run/04_defining_a_tensorrt_network_or_config_manually).
 
@@ -180,7 +151,7 @@ For more information, refer to [`debug` example 01](../../examples/cli/debug/01_
 ### Reducing Failing ONNX Models
 
 When investigating bugs involving ONNX models, it can be useful to reduce the model to a minimum
-faliing subgraph. This helps us pinpoint the issue and makes further debugging much easier.
+failing subgraph. This helps us pinpoint the issue and makes further debugging much easier.
 The `debug reduce` tools helps us automate this process.
 
 For more information, refer to [`debug` example 02](../../examples/cli/debug/02_reducing_failing_onnx_models/).

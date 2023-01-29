@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -44,7 +45,6 @@ private:
     std::string mTimingCacheFilename;
     int64_t mLabel{-1};
     int64_t mMaxBatchSize{32};
-    int64_t mMaxWorkspaceSize{1 * 1024 * 1024 * 1024};
     int64_t mCalibBatchSize{0};
     int64_t mMaxNCalibBatch{0};
     int64_t mFirstCalibBatch{0};
@@ -180,15 +180,6 @@ public:
     {
         return mMaxBatchSize;
     } //!<  get the Max Batch Size
-
-    void setMaxWorkSpaceSize(int64_t maxWorkSpaceSize) noexcept
-    {
-        mMaxWorkspaceSize = maxWorkSpaceSize;
-    } //!<  set the Max Work Space size
-    int64_t getMaxWorkSpaceSize() const noexcept
-    {
-        return mMaxWorkspaceSize;
-    } //!<  get the Max Work Space size
 
     void setCalibBatchSize(int64_t CalibBatchSize) noexcept
     {

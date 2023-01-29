@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -43,15 +44,13 @@ def register(op):
                     inputs.append(intermediate_tensors[inp.name])
                 else:
                     G_LOGGER.internal_error(
-                        "Input: {:} was not found in intermediate tensors and is not a constant.\n"
-                        "Note: Intermediate tensors include: {:}".format(inp.name, list(intermediate_tensors.keys()))
+                        f"Input: {inp.name} was not found in intermediate tensors and is not a constant.\nNote: Intermediate tensors include: {list(intermediate_tensors.keys())}"
                     )
 
             outputs = func(node.attrs, *inputs)
             if len(outputs) != len(node.outputs):
                 G_LOGGER.internal_error(
-                    "{:} reference implementation returned the wrong number of outputs.\n"
-                    "Note: Expected {:} but recevied {:}".format(op, len(node.outputs), len(outputs))
+                    f"{op} reference implementation returned the wrong number of outputs.\nNote: Expected {len(node.outputs)} but recevied {len(outputs)}"
                 )
 
             return {out_tensor.name: out for out_tensor, out in zip(node.outputs, outputs)}
@@ -82,4 +81,20 @@ def run_instancenorm(attrs, x, weights, bias):
     bias = bias.reshape(broadcast_shape)
 
     res = weights * (x - mean) / np.sqrt(var + epsilon) + bias
+    return [res]
+
+
+@register("MeanVarianceNormalization")
+def run_meanvarnorm(attrs, x):
+    epsilon = 1.0e-9
+    axes = attrs.get("axes", [0, 2, 3])
+    axes = tuple(axes)
+
+    data_mean = np.mean(x, axis=axes, keepdims=True)
+    data_mean_squared = np.power(data_mean, 2)
+    data_squared = np.power(x, 2)
+    data_squared_mean = np.mean(data_squared, axis=axes, keepdims=True)
+    std = np.sqrt(data_squared_mean - data_mean_squared)
+    res = (x - data_mean) / (std + epsilon)
+
     return [res]

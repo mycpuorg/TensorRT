@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -327,8 +328,12 @@ const IBlobNameToTensor* CaffeParser::parseBuffers(const uint8_t* deployBuffer,
         mModel = std::unique_ptr<trtcaffe::NetParameter>(new trtcaffe::NetParameter);
         google::protobuf::io::ArrayInputStream modelStream(modelBuffer, modelLength);
         google::protobuf::io::CodedInputStream codedModelStream(&modelStream);
+#if GOOGLE_PROTOBUF_VERSION >= 3011000
+        codedModelStream.SetTotalBytesLimit(modelLength);
+#else
+        // Note: This WARs the very low default size limit (64MB)
         codedModelStream.SetTotalBytesLimit(modelLength, -1);
-
+#endif
         if (!mModel->ParseFromCodedStream(&codedModelStream))
         {
             RETURN_AND_LOG_ERROR(nullptr, "Could not parse model file");
@@ -624,7 +629,12 @@ IBinaryProtoBlob* CaffeParser::parseBinaryProto(const char* fileName) noexcept
 
     IstreamInputStream rawInput(&stream);
     CodedInputStream codedInput(&rawInput);
-    codedInput.SetTotalBytesLimit(INT_MAX, -1);
+#if GOOGLE_PROTOBUF_VERSION >= 3011000
+        codedInput.SetTotalBytesLimit(INT_MAX);
+#else
+        // Note: This WARs the very low default size limit (64MB)
+        codedInput.SetTotalBytesLimit(INT_MAX, -1);
+#endif
 
     trtcaffe::BlobProto blob;
     bool ok = blob.ParseFromCodedStream(&codedInput);

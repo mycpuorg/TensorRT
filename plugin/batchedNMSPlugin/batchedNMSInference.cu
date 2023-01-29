@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,17 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "bboxUtils.h"
+#include "common/bboxUtils.h"
+#include "common/kernel.h"
+#include "common/nmsUtils.h"
 #include "cuda_runtime_api.h"
 #include "gatherNMSOutputs.h"
-#include "kernel.h"
-#include "nmsUtils.h"
-
+using namespace nvinfer1;
 pluginStatus_t nmsInference(cudaStream_t stream, const int N, const int perBatchBoxesSize, const int perBatchScoresSize,
     const bool shareLocation, const int backgroundLabelId, const int numPredsPerClass, const int numClasses,
     const int topK, const int keepTopK, const float scoreThreshold, const float iouThreshold, const DataType DT_BBOX,
     const void* locData, const DataType DT_SCORE, const void* confData, void* keepCount, void* nmsedBoxes,
-    void* nmsedScores, void* nmsedClasses, void* workspace, bool isNormalized, bool confSigmoid, bool clipBoxes, int scoreBits)
+    void* nmsedScores, void* nmsedClasses, void* workspace, bool isNormalized, bool confSigmoid, bool clipBoxes,
+    int scoreBits, bool caffeSemantics)
 {
     // locCount = batch_size * number_boxes_per_sample * 4
     const int locCount = N * perBatchBoxesSize;
@@ -38,7 +40,7 @@ pluginStatus_t nmsInference(cudaStream_t stream, const int N, const int perBatch
 
     size_t bboxDataSize = detectionForwardBBoxDataSize(N, perBatchBoxesSize, DT_BBOX);
     void* bboxDataRaw = workspace;
-    cudaMemcpyAsync(bboxDataRaw, locData, bboxDataSize, cudaMemcpyDeviceToDevice, stream);
+    CSC(cudaMemcpyAsync(bboxDataRaw, locData, bboxDataSize, cudaMemcpyDeviceToDevice, stream), STATUS_FAILURE);
     pluginStatus_t status;
 
     /*
@@ -113,7 +115,8 @@ pluginStatus_t nmsInference(cudaStream_t stream, const int N, const int perBatch
     bool flipXY = true;
     // NMS
     status = allClassNMS(stream, N, numClasses, numPredsPerClass, topK, iouThreshold, shareLocation, isNormalized,
-        DT_SCORE, DT_BBOX, bboxData, scores, indices, postNMSScores, postNMSIndices, flipXY, scoreShift);
+        DT_SCORE, DT_BBOX, bboxData, scores, indices, postNMSScores, postNMSIndices, flipXY, scoreShift,
+        caffeSemantics);
     ASSERT_FAILURE(status == STATUS_SUCCESS);
 
     // Sort the bounding boxes after NMS using scores

@@ -35,8 +35,8 @@ Among other things, Polygraphy lets you:
 
 ## Installation
 
-**IMPORTANT**: **Polygraphy does *not* support Python 2.X.**
-    **All the instructions here assume you are using Python 3 or later.**
+**IMPORTANT**: **Polygraphy supports only Python 3.6 and later.**
+    **Before following the instructions below, please ensure you are using a supported version of Python.**
 
 
 ### Installing Prebuilt Wheels
@@ -117,7 +117,11 @@ To enable this behavior, set the `POLYGRAPHY_AUTOINSTALL_DEPS` environment varia
 
 **NOTE**: *By default, dependencies will be installed using the current interpreter, and may overwrite existing*
     *packages. The default installation command, which is `python -m pip install`, can be overriden by setting*
-    *the `POLYGRAPHY_INSTALL_CMD` environment variable, or setting `polygraphy.config.INSTALL_CMD = "..."` using the Python API.*
+    *the `POLYGRAPHY_INSTALL_CMD` environment variable, or setting `polygraphy.config.INSTALL_CMD` using the Python API.*
+
+If you'd like Polygraphy to prompt you before automatically installing or
+upgrading pacakges, set the `POLYGRAPHY_ASK_BEFORE_INSTALL` environment variable to `1`
+or `polygraphy.config.ASK_BEFORE_INSTALL = True` using the Python API.
 
 #### Installing Manually
 

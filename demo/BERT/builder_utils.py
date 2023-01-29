@@ -1,15 +1,33 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 import re 
 import pickle
 
 import numpy as np
 import onnx
-import torch
 import tensorrt as trt
+import torch
 
 try:
     import tensorflow.compat.v1 as tf
     tf.disable_v2_behavior()
 except ImportError as err:
+    import sys
     sys.stderr.write("""Error: Failed to import tensorflow module ({})\n""".format(err))
     sys.exit()
 
@@ -125,8 +143,7 @@ def load_tf_weights(inputbase, config):
 
                 additional_dict[prefix + WQKV] = trt.Weights(Wall)
                 additional_dict[prefix + BQKV] = trt.Weights(Ball)
-
-                additional_dict[prefix + WQKV + "_notrans"] = trt.Weights(Wall.T)
+                additional_dict[prefix + WQKV + "_notrans"] = trt.Weights(np.ascontiguousarray(Wall.T))
 
     except Exception as error:
         TRT_LOGGER.log(TRT_LOGGER.ERROR, str(error))
@@ -222,7 +239,7 @@ def get_onnx_weight_dict(tensor_dict, config):
     
             weights_dict[prefix + WQKV] = trt.Weights(Wqkv)
             weights_dict[prefix + BQKV] = trt.Weights(Bqkv)
-            weights_dict[prefix + WQKV + "_notrans"] = trt.Weights(Wqkv.T)
+            weights_dict[prefix + WQKV + "_notrans"] = trt.Weights(np.ascontiguousarray(Wqkv.T))
 
         elif outname.find(BK) != -1 or outname.find(BV) != -1 or outname.find(WQ) != -1 or outname.find(WK) != -1 or outname.find(WV) != -1:
             pass

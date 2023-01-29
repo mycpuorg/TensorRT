@@ -1,8 +1,24 @@
-# Multi-arch container support available in non-cudnn containers.
-# Native aarch64 builds only support CUDA 11.4
-FROM nvidia/cuda:11.4.2-devel-ubuntu20.04
+#
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
-ENV TRT_VERSION 8.2.1.8
+# Multi-arch container support available in non-cudnn containers.
+FROM nvidia/cuda:11.8.0-devel-ubuntu20.04
+
+ENV TRT_VERSION 8.5.1.7
 SHELL ["/bin/bash", "-c"]
 
 # Setup user account
@@ -16,13 +32,15 @@ RUN mkdir -p /workspace && chown trtuser /workspace
 # Required to build Ubuntu 20.04 without user prompts with DLFW container
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Update CUDA signing key
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/sbsa/3bf863cc.pub
+
 # Install requried libraries
 RUN apt-get update && apt-get install -y software-properties-common
 RUN add-apt-repository ppa:ubuntu-toolchain-r/test
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev \
     wget \
-    zlib1g-dev \
     git \
     pkg-config \
     sudo \
@@ -50,7 +68,7 @@ RUN apt-get install -y --no-install-recommends \
 
 # Install TensorRT. This will also pull in CUDNN
 RUN v="${TRT_VERSION%.*}-1+cuda${CUDA_VERSION%.*}" &&\
-    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/sbsa/7fa2af80.pub &&\
+    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/sbsa/3bf863cc.pub &&\
     apt-get update &&\
     sudo apt-get -y install libnvinfer8=${v} libnvonnxparsers8=${v} libnvparsers8=${v} libnvinfer-plugin8=${v} \
         libnvinfer-dev=${v} libnvonnxparsers-dev=${v} libnvparsers-dev=${v} libnvinfer-plugin-dev=${v} \
@@ -73,11 +91,12 @@ RUN pip3 install jupyter jupyterlab
 RUN pip3 install --upgrade numpy
 
 # Download NGC client
-RUN cd /usr/local/bin && wget https://ngc.nvidia.com/downloads/ngccli_arm64.zip && unzip ngccli_arm64.zip && chmod u+x ngc && rm ngccli_arm64.zip ngc.md5 && echo "no-apikey\nascii\n" | ngc config set
+RUN cd /usr/local/bin && wget https://ngc.nvidia.com/downloads/ngccli_arm64.zip && unzip ngccli_arm64.zip && chmod u+x ngc-cli/ngc && rm ngccli_arm64.zip ngc-cli.md5 && echo "no-apikey\nascii\n" | ngc-cli/ngc config set
 
 # Set environment and working directory
 ENV TRT_LIBPATH /usr/lib/aarch64-linux-gnu/
 ENV TRT_OSSPATH /workspace/TensorRT
+ENV PATH="${PATH}:/usr/local/bin/ngc-cli"
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${TRT_OSSPATH}/build/out:${TRT_LIBPATH}"
 WORKDIR /workspace
 

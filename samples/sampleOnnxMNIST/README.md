@@ -48,11 +48,6 @@ if (!parser->parseFromFile(model_file, static_cast<int>(sample::gLogger.getRepor
 }
 ```
 
-To view additional information about the network, including layer information and individual layer dimensions, issue the following call:
-```
-parser->reportParsingInfo();
-```
-
 After the TensorRT network is constructed by parsing the model, the TensorRT engine can be built to run inference.
 
 ### Building the engine
@@ -81,8 +76,11 @@ The Activation layer implements element-wise activation functions. Specifically,
 [Convolution layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#convolution-layer)
 The Convolution layer computes a 2D (channel, height, and width) convolution, with or without bias.
 
-[FullyConnected layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#fullyconnected-layer)
-The FullyConnected layer implements a matrix-vector product, with or without bias.
+[MatrixMultiplyLayer](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#matrixmultiply-layer)
+The MatrixMultiply layer implements a matrix multiplication operation.
+(The [FullyConnected layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#fullyconnected-layer) is deprecated since 8.4.
+The bias of a FullyConnected layer can be added with an
+[ElementwiseLayer](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#elementwise-layer) of `SUM` operation.)
 
 [Pooling layer](https://docs.nvidia.com/deeplearning/sdk/tensorrt-developer-guide/index.html#pooling-layer)
 The Pooling layer implements pooling within a channel. Supported pooling types are `maximum`, `average` and `maximum-average blend`.
@@ -96,13 +94,7 @@ The Shuffle layer implements a reshape and transpose operator for tensors.
 
 ## Running the sample
 
-1.  Compile this sample by running `make` in the `<TensorRT root directory>/samples/sampleOnnxMNIST` directory. The binary named `sample_onnx_mnist` will be created in the `<TensorRT root directory>/bin` directory.
-	```
-	cd <TensorRT root directory>/samples/sampleOnnxMNIST
-	make
-	```
-
-	Where `<TensorRT root directory>` is where you installed TensorRT.
+1. Compile the sample by following build instructions in [TensorRT README](https://github.com/NVIDIA/TensorRT/).
 
 2.  Run the sample to build and run the MNIST engine from the ONNX model.
 	```

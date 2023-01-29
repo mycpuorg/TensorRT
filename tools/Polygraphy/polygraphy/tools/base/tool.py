@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,47 +16,24 @@
 #
 import argparse
 import sys
-from collections import OrderedDict
 from textwrap import dedent
 
 import polygraphy
 from polygraphy import mod
-from polygraphy.logger.logger import G_LOGGER
-from polygraphy.tools.args.base import BaseArgs
-from polygraphy.tools.args.logger import LoggerArgs
+from polygraphy.logger import G_LOGGER
+from polygraphy.tools.args import LoggerArgs
+from polygraphy.tools.args.base import ArgGroups
 
 
 @mod.export()
-class Tool(object):
+class Tool:
     """
     Base class for CLI Tools.
     """
 
     def __init__(self, name=None):
         self.name = name
-
-        # makers is a Dict[type, BaseArgs] - Maps names to subtypes of BaseArgs.
-        # This will be populated with instances of BaseArgs, and parsing will
-        # happen in __call__. Child classes can then access the instances directly
-        # instead of reimplementing argument parsing.
-        self.arg_groups = OrderedDict()
-        self.subscribe_args(LoggerArgs())
-
-    def subscribe_args(self, maker):
-        """
-        Subscribe to an argument group. The argument group's arguments will be added
-        to the argument parser, and will be parsed prior to ``run``.
-
-        Args:
-            maker (BaseArgs): The argument group to register.
-        """
-        assert isinstance(maker, BaseArgs)
-        m_type = type(maker)
-        self.arg_groups[m_type] = maker
-
-    def add_parser_args(self, parser):
-        # Should be implemented by child classes to add custom arguments.
-        pass
+        self.arg_groups = ArgGroups()  # Populated by setup_parser based on get_subscriptions()
 
     def setup_parser(self, subparsers=None):
         """
@@ -73,7 +51,13 @@ class Tool(object):
         """
         assert self.__doc__, "No help output was provided for this tool!"
 
-        allow_abbrev = all(not maker.disable_abbrev for maker in self.arg_groups.values())
+        subscriptions = self.get_subscriptions()
+        # Always subscribe to the logger arguments first.
+        for arg_group in [LoggerArgs()] + subscriptions:
+            m_type = type(arg_group)
+            self.arg_groups[m_type] = arg_group
+
+        allow_abbrev = all(arg_group.allows_abbreviation() for arg_group in self.arg_groups.values())
 
         description = dedent(self.__doc__)
         if subparsers is not None:
@@ -96,42 +80,115 @@ class Tool(object):
         else:
             parser = argparse.ArgumentParser(add_help=True, description=description, allow_abbrev=allow_abbrev)
 
-        for maker in self.arg_groups.values():
-            # Register each maker with every other maker
-            for other_maker in self.arg_groups.values():
-                maker.register(other_maker)
-
-            maker.check_registered()
-
-        # This must be done after registration, since some argument groups
-        # may conditionally define arguments based on what other groups are present.
-        for maker in self.arg_groups.values():
-            maker.add_to_parser(parser)
+        for arg_group in self.arg_groups.values():
+            arg_group.register(self.arg_groups)
+            # This must be done after registration, since some argument groups
+            # may conditionally define arguments based on what other groups are present.
+            arg_group.add_parser_args(parser)
 
         try:
             self.add_parser_args(parser)
         except Exception as err:
-            G_LOGGER.internal_error(
-                "Could not register tool argument parser for: {:}\nNote: Error was: {:}".format(self.name, err)
-            )
+            G_LOGGER.internal_error(f"Could not register tool argument parser for: {self.name}\nNote: Error was: {err}")
         return parser
 
-    def run(self, args):
-        raise NotImplementedError("run() must be implemented by child classes")
+    # Implementation for `get_subscriptions`. This should be implemented by child classes instead of `get_subscriptions`
+    def get_subscriptions_impl(self):
+        return []
 
-    def __call__(self, args):
+    def get_subscriptions(self):
         """
-        Calls this tool with the specified arguments.
+        Returns the list of argument groups this tools wishes to subscribe to.
+
+        Returns:
+            List[BaseArgs]: The list of argument groups to subscribe to.
+        """
+        return self.get_subscriptions_impl()
+
+    # Implementation for `get_subtools`. This should be implemented by child classes instead of `get_subtools`
+    def get_subtools_impl(self):
+        return "", []
+
+    def get_subtools(self):
+        """
+        Returns the subtools of this tool.
+
+        Returns:
+            Tuple[str, List[Tool]]:
+                    A tuple containing the title to use for the subtools
+                    and a list of subtools.
+        """
+        return self.get_subtools_impl()
+
+    # Implementation for `add_parser_args`. This should be implemented by child classes instead of `add_parser_args`
+    def add_parser_args_impl(self, parser):
+        pass
+
+    def add_parser_args(self, parser):
+        """
+        Add arguments to the command-line parser.
+        This will also add arguments for any subtools reported by `get_subtools()`.
+
+        Args:
+            parser (argparse.ArgumentParser): The argument parser.
+        """
+        self.add_parser_args_impl(parser)
+
+        title, subtools = self.get_subtools()
+        if subtools:
+            subparsers = parser.add_subparsers(title=title, dest="subtool")
+            subparsers.required = True
+
+            for subtool in subtools:
+                subtool.setup_parser(subparsers)
+
+    def parse(self, args):
+        """
+        Run argument parsing for all argument groups.
 
         Args:
             args (Namespace):
                     The namespace returned by ``parse_args()`` or ``parse_known_args()``.
         """
-        for maker in self.arg_groups.values():
-            maker.parse(args)
+        for arg_group in self.arg_groups.values():
+            arg_group.parse(args)
 
+    # Implementation for `run`. This should be implemented by child classes instead of `run`
+    def run_impl(self, args):
+        raise NotImplementedError("run_impl() must be implemented by child classes")
+
+    def run(self, args):
+        """
+        Runs this tool with the specified arguments.
+        This must be called only after calling `parse()`.
+
+        Args:
+            args (Namespace):
+                    The namespace returned by ``parse_args()`` or ``parse_known_args()``.
+        """
         G_LOGGER.module_info(polygraphy)
-        return self.run(args)
+
+        status = self.run_impl(args)
+        if status is None:
+            status = 0
+        return status
+
+    # Implementation for `show_start_end_logging`. This should be implemented by child classes instead of `show_start_end_logging`
+    def show_start_end_logging_impl(self, args):
+        return False
+
+    def show_start_end_logging(self, args):
+        """
+        Whether to display start and end times before and after running the tools.
+
+        Args:
+            args (Namespace):
+                    The namespace returned by ``parse_args()`` or ``parse_known_args()``.
+
+        Returns:
+            bool: Whether to display start/end times.
+        """
+        return self.show_start_end_logging_impl(args)
 
     def main(self):
         """
@@ -143,4 +200,5 @@ class Tool(object):
         """
         parser = self.setup_parser()
         args = parser.parse_args()
-        sys.exit(self.__call__(args))
+        self.parse(args)
+        sys.exit(self.run(args))

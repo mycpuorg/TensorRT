@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -107,10 +108,10 @@ endif()
 
 if (MSVC)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd /FS")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd /FS /bigobj")
     if (${NV_GEN_PDB})
         # PDB is only useful in release mode.
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi /bigobj")
         set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG /OPT:REF /OPT:ICF")
     endif()
 else()
@@ -125,21 +126,11 @@ if(${NV_TARGET_OS} MATCHES "wddm2")
 endif()
 
 # -------- START BUILD PROCESS --------
-
-if (${CMAKE_BUILD_TYPE} STREQUAL Release)
-    message(STATUS "Building in Release mode")
-    if (ENABLE_INETWORK_SERIALIZE)
-        set(TRT_LIBS nvinfer nvonnxparser nvparsers nvinfer_plugin nvserialize)
-    else()
-        set(TRT_LIBS nvinfer nvonnxparser nvparsers nvinfer_plugin)
-    endif()
+message(STATUS "Building in ${CMAKE_BUILD_TYPE} mode")
+if (ENABLE_INETWORK_SERIALIZE)
+    set(TRT_LIBS nvinfer nvonnxparser nvparsers nvinfer_plugin nvserialize)
 else()
-    message(STATUS "Building in Debug mode")
-    if (ENABLE_INETWORK_SERIALIZE)
-        set(TRT_LIBS nvinfer_debug nvonnxparser_debug nvparsers_debug nvinfer_plugin_debug nvserialize_debug)
-    else()
-        set(TRT_LIBS nvinfer_debug nvonnxparser_debug nvparsers_debug nvinfer_plugin_debug)
-    endif()
+    set(TRT_LIBS nvinfer nvonnxparser nvparsers nvinfer_plugin)
 endif()
 
 # -------- BUILDING --------

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -45,7 +46,7 @@
 #include "cuda_runtime_api.h"
 #include "logger.h"
 #include "sampleEngines.h"
-
+using namespace nvinfer1;
 using samplesCommon::SampleUniquePtr;
 
 const std::string gSampleName = "TensorRT.sample_char_rnn";
@@ -277,11 +278,12 @@ private:
 //!          creates the network using the TensorRT network definition API,
 //!          and builds a TensorRT engine.
 //!
-//! \return Returns true if the engine was created successfully and false
-//!         otherwise
+//! \return true if the engine was created successfully and false otherwise
 //!
 bool SampleCharRNNBase::build()
 {
+    mWeightMap = SampleCharRNNBase::loadWeights(mParams.weightFileName);
+
     if (mParams.loadEngine.empty())
     {
         auto builder
@@ -308,9 +310,6 @@ bool SampleCharRNNBase::build()
             return false;
         }
 
-        mWeightMap = SampleCharRNNBase::loadWeights(mParams.weightFileName);
-
-        config->setMaxWorkspaceSize(40_MiB);
         config->setFlag(BuilderFlag::kGPU_FALLBACK);
 
         // CUDA stream used for profiling by the builder.
@@ -906,7 +905,7 @@ bool SampleCharRNNBase::infer()
     sample::gLogInfo << "Received: " << genstr.substr(inputSentence.size()) << std::endl;
 
     // release the stream
-    cudaStreamDestroy(stream);
+    CHECK(cudaStreamDestroy(stream));
 
     return genstr == (inputSentence + expected);
 }
@@ -942,7 +941,7 @@ bool SampleCharRNNBase::stepOnce(
     // Asynchronously copy data from device output buffers to host output buffers
     buffers.copyOutputToHostAsync(stream);
 
-    cudaStreamSynchronize(stream);
+    CHECK(cudaStreamSynchronize(stream));
     return true;
 }
 

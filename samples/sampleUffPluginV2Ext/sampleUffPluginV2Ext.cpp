@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -227,7 +228,6 @@ public:
         }
 
         SampleUniquePtr<IBuilderConfig> networkConfig{builder->createBuilderConfig()};
-        networkConfig->setMaxWorkspaceSize(1_GiB);
         if (gArgs.runInFp16)
         {
             networkConfig->setFlag(BuilderFlag::kFP16);
@@ -442,7 +442,7 @@ public:
         cudaStream_t stream) noexcept override
     {
         const float kONE = 1.0F, kZERO = 0.0F;
-        cudnnSetStream(mCudnn, stream);
+        CHECK(cudnnSetStream(mCudnn, stream));
 
         const int N = 1;
         // Use float to simulate int8 calculation
@@ -470,6 +470,8 @@ public:
         if (mDataType == DataType::kINT8)
         {
             copyDeviceToInt8Output(output, outputs[0]);
+            CHECK(cudaFree(input));
+            CHECK(cudaFree(output));
         }
         return 0;
     }

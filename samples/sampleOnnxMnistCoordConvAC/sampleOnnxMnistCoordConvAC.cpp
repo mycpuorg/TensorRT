@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -36,7 +37,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
-
+using namespace nvinfer1;
 using samplesCommon::SampleUniquePtr;
 
 const std::string gSampleName = "TensorRT.sample_onnx_mnist_coord_conv_ac";
@@ -103,7 +104,7 @@ private:
 //! \details This function creates the Onnx MNIST network by parsing the Onnx model and builds
 //!          the engine that will be used to run MNIST (mEngine)
 //!
-//! \return Returns true if the engine was created successfully and false otherwise
+//! \return true if the engine was created successfully and false otherwise
 //!
 bool SampleOnnxMnistCoordConvAC::build()
 {
@@ -149,8 +150,20 @@ bool SampleOnnxMnistCoordConvAC::build()
     }
     config->setProfileStream(*profileStream);
 
+    SampleUniquePtr<IHostMemory> plan{builder->buildSerializedNetwork(*network, *config)};
+    if (!plan)
+    {
+        return false;
+    }
+
+    SampleUniquePtr<IRuntime> runtime{createInferRuntime(sample::gLogger.getTRTLogger())};
+    if (!runtime)
+    {
+        return false;
+    }
+
     mEngine = std::shared_ptr<nvinfer1::ICudaEngine>(
-        builder->buildEngineWithConfig(*network, *config), samplesCommon::InferDeleter());
+        runtime->deserializeCudaEngine(plan->data(), plan->size()), samplesCommon::InferDeleter());
     if (!mEngine)
     {
         return false;
@@ -186,7 +199,6 @@ bool SampleOnnxMnistCoordConvAC::constructNetwork(SampleUniquePtr<nvinfer1::IBui
         return false;
     }
 
-    config->setMaxWorkspaceSize(16_MiB);
     if (mParams.fp16)
     {
         config->setFlag(BuilderFlag::kFP16);
@@ -324,12 +336,12 @@ bool SampleOnnxMnistCoordConvAC::verifyOutput(const samplesCommon::BufferManager
 samplesCommon::OnnxSampleParams initializeSampleParams(const samplesCommon::Args& args)
 {
     samplesCommon::OnnxSampleParams params;
-    if (args.dataDirs.empty()) //!< Use default directories if user hasn't provided directory paths
+    if (args.dataDirs.empty()) // Use default directories if user hasn't provided directory paths
     {
         params.dataDirs.push_back("data/mnist/");
         params.dataDirs.push_back("data/samples/mnist/");
     }
-    else //!< Use the data directory provided by the user
+    else // Use the data directory provided by the user
     {
         params.dataDirs = args.dataDirs;
     }

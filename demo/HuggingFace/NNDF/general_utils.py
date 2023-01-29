@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,12 +15,18 @@
 # limitations under the License.
 #
 
-"""Common utils used by demo folder."""
+"""Common utils used by demo folder.
+Note: 
+- For now, users/developers that are contributing to TensorRT OSS should NOT import non-default Python packages in this file, because the test pipeline's boot-up process cannot load extra dependencies. In the near future, alternative solutions such as creating a separate boot-up util list can be possible. 
+- Users/developers that are just using the TensorRT OSS without contributing are still free to modify this file and customize for deployment.
+"""
 
 import os
 import shutil
 import timeit
+import math
 
+from datetime import datetime
 from shutil import rmtree
 from typing import Callable, Union, List
 from collections import defaultdict
@@ -27,7 +34,7 @@ from statistics import mean, median
 from glob import glob
 
 # NNDF
-from NNDF.networks import NNConfig, NetworkResult, NetworkMetadata
+from NNDF.networks import NNConfig, NetworkResult, NetworkMetadata, TimingProfile
 from NNDF.logger import G_LOGGER
 
 # Used for HuggingFace setting random seed
@@ -142,29 +149,61 @@ def remove_if_empty(
 
 
 def measure_python_inference_code(
-    stmt: Union[Callable, str], warmup: int = 3, number: int = 10, iterations: int = 10
+    stmt: Union[Callable, str], timing_profile: TimingProfile
 ) -> None:
     """
     Measures the time it takes to run Pythonic inference code.
     Statement given should be the actual model inference like forward() in torch.
 
-    See timeit for more details on how stmt works.
-
     Args:
         stmt (Union[Callable, str]): Callable or string for generating numbers.
-        number (int): Number of times to call function per iteration.
-        iterations (int): Number of measurement cycles.
+        timing_profile (TimingProfile): The timing profile settings with the following fields.
+            warmup (int): Number of iterations to run as warm-up before actual measurement cycles.
+            number (int): Number of times to call function per iteration.
+            iterations (int): Number of measurement cycles.
+            duration (float): Minimal duration for measurement cycles.
+            percentile (int or list of ints): key percentile number(s) for measurement.
     """
+
+    def simple_percentile(data, p):
+        """
+        Temporary replacement for numpy.percentile() because TRT CI/CD pipeline requires additional packages to be added at boot up in this general_utils.py file.
+        """
+        assert p >= 0 and p <= 100, "Percentile must be between 1 and 99"
+        
+        rank = len(data) * p / 100
+        if rank.is_integer():
+            return sorted(data)[int(rank)]
+        else:
+            return sorted(data)[int(math.ceil(rank)) - 1]
+
+    warmup = timing_profile.warmup
+    number = timing_profile.number
+    iterations = timing_profile.iterations
+    duration = timing_profile.duration
+    percentile = timing_profile.percentile
+
     G_LOGGER.debug(
-        "Measuring inference call with warmup: {} and number: {} and iterations {}".format(
-            warmup, number, iterations
+        "Measuring inference call with warmup: {} and number: {} and iterations {} and duration {} secs".format(
+            warmup, number, iterations, duration
         )
     )
     # Warmup
     warmup_mintime = timeit.repeat(stmt, number=number, repeat=warmup)
     G_LOGGER.debug("Warmup times: {}".format(warmup_mintime))
 
-    return median(timeit.repeat(stmt, number=number, repeat=iterations)) / number
+    # Actual measurement cycles
+    results = []
+    start_time = datetime.now()
+    iter_idx = 0
+    while iter_idx < iterations or (datetime.now() - start_time).total_seconds() < duration:
+        iter_idx += 1
+        results.append(timeit.timeit(stmt, number=number))
+
+    if isinstance(percentile, int):
+        return simple_percentile(results, percentile) / number
+    else:
+        return [simple_percentile(results, p) / number for p in percentile]
 
 class NNFolderWorkspace:
     """

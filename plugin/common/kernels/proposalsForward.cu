@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,31 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "kernel.h"
-#include "bboxUtils.h"
+#include "common/bboxUtils.h"
+#include "common/kernel.h"
 
+using namespace nvinfer1;
 // PROPOSALS INFERENCE
-pluginStatus_t proposalsInference(cudaStream_t stream,
-                                 const int N,
-                                 const int A,
-                                 const int H,
-                                 const int W,
-                                 const int featureStride,
-                                 const int preNmsTop,
-                                 const int nmsMaxOut,
-                                 const float iouThreshold,
-                                 const float minBoxSize,
-                                 const float* imInfo,
-                                 const float* anchors,
-                                 const DataType t_scores,
-                                 const DLayout_t l_scores,
-                                 const void* scores,
-                                 const DataType t_deltas,
-                                 const DLayout_t l_deltas,
-                                 const void* deltas,
-                                 void* workspace,
-                                 const DataType t_rois,
-                                 void* rois)
+pluginStatus_t proposalsInference(cudaStream_t stream, const int N, const int A, const int H, const int W,
+    const int featureStride, const int preNmsTop, const int nmsMaxOut, const float iouThreshold, const float minBoxSize,
+    const float* imInfo, const float* anchors, const DataType t_scores, const DLayout_t l_scores, const void* scores,
+    const DataType t_deltas, const DLayout_t l_deltas, const void* deltas, void* workspace, const DataType t_rois,
+    void* rois)
 {
     /*
      * N: batch size

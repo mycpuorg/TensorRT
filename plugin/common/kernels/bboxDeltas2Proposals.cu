@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,12 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "common/kernel.h"
 #include <algorithm>
 #include <array>
 #include <math.h>
 #include <stdio.h>
-#include "kernel.h"
 
+using namespace nvinfer1;
 using std::max;
 using std::min;
 
@@ -208,13 +210,15 @@ struct bd2pLaunchConfig
     DLayout_t l_scores;
     bd2pFun function;
 
-    bd2pLaunchConfig(DataType t_deltas, DLayout_t l_deltas, DataType t_proposals, DLayout_t l_proposals, DataType t_scores, DLayout_t l_scores)
+    bd2pLaunchConfig(DataType t_deltas, DLayout_t l_deltas, DataType t_proposals, DLayout_t l_proposals,
+        DataType t_scores, DLayout_t l_scores)
         : t_deltas(t_deltas)
         , l_deltas(l_deltas)
         , t_proposals(t_proposals)
         , l_proposals(l_proposals)
         , t_scores(t_scores)
         , l_scores(l_scores)
+        , function(nullptr)
     {
     }
 

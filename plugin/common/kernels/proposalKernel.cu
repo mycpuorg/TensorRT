@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,21 +15,20 @@
  * limitations under the License.
  */
 
-
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <stdlib.h>
-#include <vector>
+#include "NvInfer.h"
+#include "common/plugin.h"
 #include <algorithm>
 #include <assert.h>
-#include <stdio.h>
 #include <cub/cub.cuh>
+#include <cuda.h>
+#include <cuda_runtime.h>
 #include <functional>
 #include <stdint.h>
-#include "NvInfer.h"
-#include "plugin.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
 
-#define CHECK_CUDA(call)                                                                                               \
+#define PLUGIN_CHECK_CUDA(call)                                                                                        \
     do                                                                                                                 \
     {                                                                                                                  \
         cudaError_t status = call;                                                                                     \
@@ -407,16 +407,14 @@ struct nmsLaunchConfig
     {
     }
 
-    nmsLaunchConfig(DType_t t_fgScores,
-                    DLayout_t l_fgScores,
-                    DType_t t_proposals,
-                    DLayout_t l_proposals,
-                    DType_t t_rois)
+    nmsLaunchConfig(
+        DType_t t_fgScores, DLayout_t l_fgScores, DType_t t_proposals, DLayout_t l_proposals, DType_t t_rois)
         : t_fgScores(t_fgScores)
         , l_fgScores(l_fgScores)
         , t_proposals(t_proposals)
         , l_proposals(l_proposals)
         , t_rois(t_rois)
+        , function(nullptr)
     {
     }
 
@@ -589,16 +587,13 @@ frcnnStatus_t extractFgScores_gpu(cudaStream_t stream,
     return STATUS_SUCCESS;
 }
 
-
-
-
-cudaError_t _copy_anchors_to_gpu(cudaStream_t stream, float* ANCHOR_SIZES, int anc_size_num,
-                          float* ANCHOR_RATIOS, int anc_ratio_num, void* anchor_size_buf)
+cudaError_t _copy_anchors_to_gpu(cudaStream_t stream, float* ANCHOR_SIZES, int anc_size_num, float* ANCHOR_RATIOS,
+    int anc_ratio_num, void* anchor_size_buf)
 {
-    CHECK_CUDA(cudaMemcpyAsync(anchor_size_buf, static_cast<void*>(ANCHOR_SIZES), sizeof(float) * anc_size_num,
-                    cudaMemcpyHostToDevice, stream));
-    CHECK_CUDA(cudaMemcpyAsync(static_cast<void*>(static_cast<float*>(anchor_size_buf) + anc_size_num), static_cast<void*>(ANCHOR_RATIOS), sizeof(float) * anc_ratio_num,
-                                           cudaMemcpyHostToDevice, stream));
+    PLUGIN_CHECK_CUDA(cudaMemcpyAsync(anchor_size_buf, static_cast<void*>(ANCHOR_SIZES), sizeof(float) * anc_size_num,
+        cudaMemcpyHostToDevice, stream));
+    PLUGIN_CHECK_CUDA(cudaMemcpyAsync(static_cast<void*>(static_cast<float*>(anchor_size_buf) + anc_size_num),
+        static_cast<void*>(ANCHOR_RATIOS), sizeof(float) * anc_ratio_num, cudaMemcpyHostToDevice, stream));
 
     return cudaSuccess;
 }
@@ -669,46 +664,26 @@ int proposalInference_gpu(
     void* anchor_size_buf = nextWorkspacePtr((int8_t*) fg_scores, fg_scores_size);
     void* anchor_ratio_buf = static_cast<void*>(static_cast<float*>(anchor_size_buf) + anc_size_num);
     frcnnStatus_t status;
-    CHECK_CUDA(_copy_anchors_to_gpu(stream, ANCHOR_SIZES, anc_size_num, ANCHOR_RATIOS, anc_ratio_num,
-                         anchor_size_buf));
+    PLUGIN_CHECK_CUDA(
+        _copy_anchors_to_gpu(stream, ANCHOR_SIZES, anc_size_num, ANCHOR_RATIOS, anc_ratio_num, anchor_size_buf));
 
+    status = extractFgScores_gpu<float>(
+        stream, batch_size, anc_size_num * anc_ratio_num, rpn_height, rpn_width, rpn_prob, fg_scores);
+    PLUGIN_ASSERT(status == STATUS_SUCCESS);
+    PLUGIN_CHECK_CUDA(
+        _inverse_transform_wrapper(static_cast<const float*>(rpn_prob), static_cast<const float*>(rpn_regr), batch_size,
+            input_height, input_width, rpn_height, rpn_width, rpn_std_scaling, rpn_stride,
+            static_cast<float*>(anchor_size_buf), anc_size_num, static_cast<float*>(anchor_ratio_buf), anc_ratio_num,
+            bbox_min_size, static_cast<float*>(fg_scores), static_cast<float*>(proposals), stream));
 
+    status = nms(stream, batch_size, anc_size_num * anc_ratio_num * rpn_height * rpn_width, RPN_PRE_NMS_TOP_N,
+        MAX_BOX_NUM, nms_iou_threshold, nvinfer1::DataType::kFLOAT, NCHW, fg_scores, t_proposals, l_proposals,
+        proposals, workspace, nvinfer1::DataType::kFLOAT, output);
 
-    status = extractFgScores_gpu<float>(stream,
-                                        batch_size,
-                                        anc_size_num * anc_ratio_num,
-                                        rpn_height,
-                                        rpn_width,
-                                        rpn_prob,
-                                        fg_scores);
-    ASSERT(status == STATUS_SUCCESS);
-    CHECK_CUDA(_inverse_transform_wrapper(static_cast<const float*>(rpn_prob), static_cast<const float*>(rpn_regr),
-                               batch_size, input_height, input_width, rpn_height, rpn_width, rpn_std_scaling, rpn_stride,
-                               static_cast<float*>(anchor_size_buf), anc_size_num, static_cast<float*>(anchor_ratio_buf),
-                               anc_ratio_num, bbox_min_size, static_cast<float*>(fg_scores), static_cast<float*>(proposals),
-                               stream));
+    PLUGIN_ASSERT(status == STATUS_SUCCESS);
 
-    status = nms(stream,
-                 batch_size,
-                 anc_size_num * anc_ratio_num * rpn_height * rpn_width,
-                 RPN_PRE_NMS_TOP_N,
-                 MAX_BOX_NUM,
-                 nms_iou_threshold,
-                 nvinfer1::DataType::kFLOAT,
-                 NCHW,
-                 fg_scores,
-                 t_proposals,
-                 l_proposals,
-                 proposals,
-                 workspace,
-                 nvinfer1::DataType::kFLOAT,
-                 output);
-
-    ASSERT(status == STATUS_SUCCESS);
-
-    CHECK_CUDA(_normalize_rois(static_cast<float*>(output), batch_size, MAX_BOX_NUM, input_width, input_height,
-                    stream));
-
+    PLUGIN_CHECK_CUDA(
+        _normalize_rois(static_cast<float*>(output), batch_size, MAX_BOX_NUM, input_width, input_height, stream));
 
     return STATUS_SUCCESS;
 }

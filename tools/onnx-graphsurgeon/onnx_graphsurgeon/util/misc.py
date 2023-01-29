@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -65,6 +66,13 @@ def is_dynamic_dimension(dim):
 
 def is_dynamic_shape(shape):
     return any(is_dynamic_dimension(dim) for dim in shape)
+
+
+def volume(obj):
+    vol = 1
+    for elem in obj:
+        vol *= elem
+    return vol
 
 
 # Special type of list that synchronizes contents with another list.

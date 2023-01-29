@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,15 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "kernel.h"
+#include "common/kernel.h"
 #include <cstdio>
 
-pluginStatus_t generateAnchors_cpu(int numRatios,
-                                  float* ratios,
-                                  int numScales,
-                                  float* scales,
-                                  int baseSize,
-                                  float* anchors)
+pluginStatus_t generateAnchors_cpu(
+    int numRatios, float* ratios, int numScales, float* scales, int baseSize, float* anchors)
 {
 #ifdef DEBUG
     DEBUG_PRINTF("Generating Anchors with:\n");
@@ -92,9 +89,9 @@ pluginStatus_t generateAnchors(cudaStream_t stream,
     // Each anchor box has 4 parameters
     int ac = numRatios * numScales * 4;
     float* anchors_cpu;
-    cudaMallocHost((void**) &anchors_cpu, sizeof(float) * ac);
+    CSC(cudaMallocHost((void**) &anchors_cpu, sizeof(float) * ac), STATUS_FAILURE);
     pluginStatus_t status = generateAnchors_cpu(numRatios, ratios, numScales, scales, baseSize, anchors_cpu);
-    cudaMemcpyAsync(anchors, anchors_cpu, sizeof(float) * ac, cudaMemcpyHostToDevice, stream);
-    cudaFreeHost(anchors_cpu);
+    CSC(cudaMemcpyAsync(anchors, anchors_cpu, sizeof(float) * ac, cudaMemcpyHostToDevice, stream), STATUS_FAILURE);
+    CSC(cudaFreeHost(anchors_cpu), STATUS_FAILURE);
     return status;
 }

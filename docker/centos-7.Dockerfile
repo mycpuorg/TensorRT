@@ -1,24 +1,27 @@
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+#
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
 
-ARG CUDA_VERSION=11.4.2
+ARG CUDA_VERSION=11.8.0
 ARG OS_VERSION=7
 
 FROM nvidia/cuda:${CUDA_VERSION}-cudnn8-devel-centos${OS_VERSION}
 LABEL maintainer="NVIDIA CORPORATION"
 
-ENV TRT_VERSION 8.2.1.8
+ENV TRT_VERSION 8.5.1.7
 SHELL ["/bin/bash", "-c"]
 
 # Setup user account
@@ -35,7 +38,6 @@ RUN yum -y install \
     openssl-devel \
     bzip2-devel \
     libffi-devel \
-    zlib-devel \
     wget \
     perl-core \
     git \
@@ -82,13 +84,14 @@ RUN cd /tmp && \
     rm ./cmake-3.14.4-Linux-x86_64.sh
 
 # Download NGC client
-RUN cd /usr/local/bin && wget https://ngc.nvidia.com/downloads/ngccli_cat_linux.zip && unzip ngccli_cat_linux.zip && chmod u+x ngc && rm ngccli_cat_linux.zip ngc.md5 && echo "no-apikey\nascii\n" | ngc config set
+RUN cd /usr/local/bin && wget https://ngc.nvidia.com/downloads/ngccli_cat_linux.zip && unzip ngccli_cat_linux.zip && chmod u+x ngc-cli/ngc && rm ngccli_cat_linux.zip ngc-cli.md5 && echo "no-apikey\nascii\n" | ngc-cli/ngc config set
 
 RUN rm /usr/bin/python && ln -s /usr/bin/python3 /usr/bin/python
 
 # Set environment and working directory
 ENV TRT_LIBPATH /usr/lib/x86_64-linux-gnu
 ENV TRT_OSSPATH /workspace/TensorRT
+ENV PATH="${PATH}:/usr/local/bin/ngc-cli"
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${TRT_OSSPATH}/build/out:${TRT_LIBPATH}"
 # Use devtoolset-8 as default compiler
 ENV PATH="/opt/rh/devtoolset-8/root/bin:${PATH}"

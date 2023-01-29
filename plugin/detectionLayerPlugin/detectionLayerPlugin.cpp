@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +15,7 @@
  * limitations under the License.
  */
 #include "detectionLayerPlugin.h"
-#include "plugin.h"
+#include "common/plugin.h"
 #include <cuda_runtime_api.h>
 
 using namespace nvinfer1;
@@ -62,28 +63,29 @@ IPluginV2Ext* DetectionLayerPluginCreator::createPlugin(const char* name, const 
 {
     try
     {
-        const PluginField* fields = fc->fields;
+        plugin::validateRequiredAttributesExist({"num_classes", "keep_topk", "score_threshold", "iou_threshold"}, fc);
+        PluginField const* fields = fc->fields;
         for (int i = 0; i < fc->nbFields; ++i)
         {
             const char* attrName = fields[i].name;
             if (!strcmp(attrName, "num_classes"))
             {
-                assert(fields[i].type == PluginFieldType::kINT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
                 mNbClasses = *(static_cast<const int*>(fields[i].data));
             }
             if (!strcmp(attrName, "keep_topk"))
             {
-                assert(fields[i].type == PluginFieldType::kINT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
                 mKeepTopK = *(static_cast<const int*>(fields[i].data));
             }
             if (!strcmp(attrName, "score_threshold"))
             {
-                assert(fields[i].type == PluginFieldType::kFLOAT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
                 mScoreThreshold = *(static_cast<const float*>(fields[i].data));
             }
             if (!strcmp(attrName, "iou_threshold"))
             {
-                assert(fields[i].type == PluginFieldType::kFLOAT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
                 mIOUThreshold = *(static_cast<const float*>(fields[i].data));
             }
         }
@@ -116,10 +118,10 @@ DetectionLayer::DetectionLayer(int num_classes, int keep_topk, float score_thres
     , mIOUThreshold(iou_threshold)
 {
     mBackgroundLabel = 0;
-    assert(mNbClasses > 0);
-    assert(mKeepTopK > 0);
-    assert(score_threshold >= 0.0f);
-    assert(iou_threshold > 0.0f);
+    PLUGIN_VALIDATE(mNbClasses > 0);
+    PLUGIN_VALIDATE(mKeepTopK > 0);
+    PLUGIN_VALIDATE(score_threshold >= 0.0f);
+    PLUGIN_VALIDATE(iou_threshold > 0.0f);
 
     mParam.backgroundLabelId = 0;
     mParam.numClasses = mNbClasses;
@@ -142,7 +144,7 @@ int DetectionLayer::initialize() noexcept
 
     mValidCnt = std::make_shared<CudaBind<int>>(mMaxBatchSize);
 
-    CUASSERT(cudaMemcpy(
+    PLUGIN_CUASSERT(cudaMemcpy(
         mValidCnt->mPtr, static_cast<void*>(tempValidCnt.data()), sizeof(int) * mMaxBatchSize, cudaMemcpyHostToDevice));
 
     return 0;
@@ -216,7 +218,7 @@ void DetectionLayer::serialize(void* buffer) const noexcept
     write(d, mIOUThreshold);
     write(d, mMaxBatchSize);
     write(d, mAnchorsCnt);
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 DetectionLayer::DetectionLayer(const void* data, size_t length)
@@ -228,7 +230,7 @@ DetectionLayer::DetectionLayer(const void* data, size_t length)
     float iou_threshold = read<float>(d);
     mMaxBatchSize = read<int>(d);
     mAnchorsCnt = read<int>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 
     mNbClasses = num_classes;
     mKeepTopK = keep_topk;
@@ -249,13 +251,13 @@ void DetectionLayer::check_valid_inputs(const nvinfer1::Dims* inputs, int nbInpu
     // classifier_delta_bbox[N, anchors, num_classes*4, 1, 1]
     // classifier_class[N, anchors, num_classes, 1, 1]
     // rpn_rois[N, anchors, 4]
-    assert(nbInputDims == 3);
+    PLUGIN_ASSERT(nbInputDims == 3);
     // delta_bbox
-    assert(inputs[0].nbDims == 4 && inputs[0].d[1] == mNbClasses * 4);
+    PLUGIN_ASSERT(inputs[0].nbDims == 4 && inputs[0].d[1] == mNbClasses * 4);
     // score
-    assert(inputs[1].nbDims == 4 && inputs[1].d[1] == mNbClasses);
+    PLUGIN_ASSERT(inputs[1].nbDims == 4 && inputs[1].d[1] == mNbClasses);
     // roi
-    assert(inputs[2].nbDims == 2 && inputs[2].d[1] == 4);
+    PLUGIN_ASSERT(inputs[2].nbDims == 2 && inputs[2].d[1] == 4);
 }
 
 size_t DetectionLayer::getWorkspaceSize(int batch_size) const noexcept
@@ -268,7 +270,7 @@ Dims DetectionLayer::getOutputDimensions(int index, const Dims* inputs, int nbIn
 {
 
     check_valid_inputs(inputs, nbInputDims);
-    assert(index == 0);
+    PLUGIN_ASSERT(index == 0);
 
     // [N, anchors, (y1, x1, y2, x2, class_id, score)]
     nvinfer1::Dims detections;
@@ -332,7 +334,7 @@ void DetectionLayer::configurePlugin(const Dims* inputDims, int nbInputs, const 
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize) noexcept
 {
     check_valid_inputs(inputDims, nbInputs);
-    assert(inputDims[0].d[0] == inputDims[1].d[0] && inputDims[1].d[0] == inputDims[2].d[0]);
+    PLUGIN_ASSERT(inputDims[0].d[0] == inputDims[1].d[0] && inputDims[1].d[0] == inputDims[2].d[0]);
 
     mAnchorsCnt = inputDims[2].d[0];
     mType = inputTypes[0];

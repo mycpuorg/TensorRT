@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,72 +16,68 @@
 # limitations under the License.
 #
 
-'''
+"""
 Simple printing utils
 
 Utils to print traces and profiles in CSV format
-'''
+"""
 
 
 from __future__ import print_function
 
 
-
 def combineDescriptions(prolog, features, descriptions):
-    ''' Combine features with their descriptions '''
+    """Combine features with their descriptions"""
 
     fullDescription = prolog
-    sep = ' '
+    sep = " "
     for feature, description in zip(features, descriptions):
-        fullDescription += sep + feature + ' (' + description + ')'
-        sep = ', '
+        fullDescription += sep + feature + " (" + description + ")"
+        sep = ", "
 
     return fullDescription
 
 
-
-def printHeader(allFeatures, selection, gp = False, count = False):
-    ''' Print table header '''
+def printHeader(allFeatures, selection, gp=False, count=False):
+    """Print table header"""
 
     if gp:
-        sep = '#'
+        sep = "#"
         if count:
-            sep += 'count, '
+            sep += "count, "
     else:
-        sep = ''
+        sep = ""
 
     for feature in allFeatures:
-       if feature in selection:
-           print(sep + feature, end = '')
-           sep = ', '
+        if feature in selection:
+            print(sep + feature, end="")
+            sep = ", "
 
-    print('')
+    print("")
 
 
-
-def printCsv(data, count = False):
-    ''' Print trace in CSV format '''
+def printCsv(data, count=False):
+    """Print trace in CSV format"""
 
     c = 0
     for row in data:
         if count:
-            print(c, end = '')
+            print(c, end="")
             c += 1
-            sep = ', '
+            sep = ", "
         else:
-            sep = ''
+            sep = ""
         for r in row:
             if isinstance(r, str):
-                print(sep + r, end = '')
+                print(sep + r, end="")
             else:
-                print('{}{:.6}'.format(sep, float(r)), end = '')
-            sep = ', '
-        print('')
-
+                print("{}{:.6}".format(sep, float(r)), end="")
+            sep = ", "
+        print("")
 
 
 def filterData(data, allFeatures, selection):
-    ''' Drop features not in the given set '''
+    """Drop features not in the given set"""
 
     filteredData = []
     for d in data:
@@ -90,7 +87,7 @@ def filterData(data, allFeatures, selection):
                 if f in d:
                     row.append(d[f])
                 else:
-                    row.append('')
+                    row.append("")
         filteredData.append(row)
 
     return filteredData

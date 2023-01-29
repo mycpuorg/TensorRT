@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,6 +21,7 @@
 #include <vector>
 
 using namespace nvinfer1;
+using namespace nvinfer1::plugin;
 const int NUM_COORDCONV_CHANNELS = 2;
 
 namespace
@@ -47,13 +49,14 @@ CoordConvACPlugin::CoordConvACPlugin(nvinfer1::DataType iType, int iC, int iH, i
 CoordConvACPlugin::CoordConvACPlugin(const void* data, size_t length)
 {
     const char *d = reinterpret_cast<const char*>(data), *a = d;
+    iType = read<nvinfer1::DataType>(d);
     iC = read<int>(d);
     iH = read<int>(d);
     iW = read<int>(d);
     oC = read<int>(d);
     oH = read<int>(d);
     oW = read<int>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 int CoordConvACPlugin::getNbOutputs() const noexcept
@@ -70,13 +73,18 @@ void CoordConvACPlugin::terminate() noexcept {}
 
 Dims CoordConvACPlugin::getOutputDimensions(int index, const Dims* inputs, int nbInputDims) noexcept
 {
+    PLUGIN_ASSERT(index == 0);
+    PLUGIN_ASSERT(nbInputDims == 1);
+    PLUGIN_ASSERT(inputs != nullptr);
     // CHW
     nvinfer1::Dims dimsOutput;
-    dimsOutput.nbDims = inputs->nbDims;
-    dimsOutput.d[0] = inputs->d[0] + NUM_COORDCONV_CHANNELS;
-    dimsOutput.d[1] = inputs->d[1];
-    dimsOutput.d[2] = inputs->d[2];
-    dimsOutput.d[3] = inputs->d[3];
+    // Don't trigger null dereference since we check if inputs is nullptr above.
+    // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
+    PLUGIN_ASSERT(inputs[0].nbDims == 3);
+    dimsOutput.nbDims = inputs[0].nbDims;
+    dimsOutput.d[0] = inputs[0].d[0] + NUM_COORDCONV_CHANNELS;
+    dimsOutput.d[1] = inputs[0].d[1];
+    dimsOutput.d[2] = inputs[0].d[2];
     return dimsOutput;
 }
 
@@ -87,28 +95,29 @@ size_t CoordConvACPlugin::getWorkspaceSize(int maxBatchSize) const noexcept
 
 size_t CoordConvACPlugin::getSerializationSize() const noexcept
 {
-    // iC, iH, iW, oC, oH, oW
-    return sizeof(int) * 6;
+    // iType, iC, iH, iW, oC, oH, oW
+    return sizeof(nvinfer1::DataType) + sizeof(int) * 6;
 }
 
 void CoordConvACPlugin::serialize(void* buffer) const noexcept
 {
     char *d = reinterpret_cast<char*>(buffer), *a = d;
+    write(d, iType);
     write(d, iC);
     write(d, iH);
     write(d, iW);
     write(d, oC);
     write(d, oH);
     write(d, oW);
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 void CoordConvACPlugin::configurePlugin(const Dims* inputDims, int nbInputs, const Dims* outputDims, int nbOutputs,
     const DataType* inputTypes, const DataType* outputTypes, const bool* inputIsBroadcast,
     const bool* outputIsBroadcast, nvinfer1::PluginFormat format, int maxBatchSize) noexcept
 {
-    ASSERT(nbInputs == 1);
-    ASSERT(nbOutputs == 1);
+    PLUGIN_ASSERT(nbInputs == 1);
+    PLUGIN_ASSERT(nbOutputs == 1);
 
     iC = inputDims->d[0];
     iH = inputDims->d[1];
@@ -143,8 +152,17 @@ void CoordConvACPlugin::destroy() noexcept
 
 IPluginV2Ext* CoordConvACPlugin::clone() const noexcept
 {
-    auto* plugin = new CoordConvACPlugin(iType, iC, iH, iW, oC, oH, oW);
-    return plugin;
+    try
+    {
+        auto* plugin = new CoordConvACPlugin(iType, iC, iH, iW, oC, oH, oW);
+        plugin->setPluginNamespace(mPluginNamespace);
+        return plugin;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 void CoordConvACPlugin::setPluginNamespace(const char* pluginNamespace) noexcept
@@ -194,14 +212,31 @@ const PluginFieldCollection* CoordConvACPluginCreator::getFieldNames() noexcept
 
 IPluginV2Ext* CoordConvACPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    CoordConvACPlugin* plugin = new CoordConvACPlugin();
-    plugin->setPluginNamespace(mNamespace.c_str());
-    return plugin;
+    try
+    {
+        CoordConvACPlugin* plugin = new CoordConvACPlugin();
+        plugin->setPluginNamespace(mNamespace.c_str());
+        return plugin;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
-IPluginV2Ext* CoordConvACPluginCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength) noexcept
+IPluginV2Ext* CoordConvACPluginCreator::deserializePlugin(
+    const char* name, const void* serialData, size_t serialLength) noexcept
 {
-    CoordConvACPlugin* plugin = new CoordConvACPlugin(serialData, serialLength);
-    plugin->setPluginNamespace(mNamespace.c_str());
-    return plugin;
+    try
+    {
+        CoordConvACPlugin* plugin = new CoordConvACPlugin(serialData, serialLength);
+        plugin->setPluginNamespace(mNamespace.c_str());
+        return plugin;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }

@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -600,11 +601,12 @@ class TFODGraphSurgeon:
             # Find sigmoid node in the end of the network, applies sigmoid to get instance segmentation masks
             last_sigmoid_node = self.graph.find_descendant_by_op(maxpool_node, "Sigmoid", 40)
 
-            # Find first ancestor of Sigmoid of operation type Add. This Add node is one of the Gather node inputs,
-            # Gather node performs gather on 0th axis of data tensor and requires indices that set tesnors to be withing bounds,
-            # this Add node provides the bounds for Gather. 
-            add_node = self.graph.find_ancestor_by_op(last_sigmoid_node, "Add")
-            add_node.inputs[1] = class_reshape_node[0]
+            if (self.num_classes > 1):
+                # Find first ancestor of Sigmoid of operation type Add. This Add node is one of the Gather node inputs,
+                # Gather node performs gather on 0th axis of data tensor and requires indices that set tesnors to be withing bounds,
+                # this Add node provides the bounds for Gather.
+                add_node = self.graph.find_ancestor_by_op(last_sigmoid_node, "Add")
+                add_node.inputs[1] = class_reshape_node[0]
 
             # Final Reshape node, reshapes output of Sigmoid, important for various batch_size support.
             final_reshape_shape = np.asarray([self.batch_size, self.first_stage_max_proposals, self.mask_height, self.mask_width], dtype=np.int64)

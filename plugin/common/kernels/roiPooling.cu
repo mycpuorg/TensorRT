@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "kernel.h"
+#include "common/kernel.h"
 #include <algorithm>
 #include <array>
 #include <assert.h>
@@ -22,12 +23,13 @@
 #include <math.h>
 #include <stdio.h>
 
+using namespace nvinfer1;
 // This macro is to control shared memory usage. If set to 1, kernel loads the whole feature map
-// into shared memory for reuse; If set to 0, kernel loads data from global memory directly. 
+// into shared memory for reuse; If set to 0, kernel loads data from global memory directly.
 // Roi pooling performance is data dependent. You can test which value is better to your data.
-// If all bboxes are very small, 0 is recommended, otherwise, shared memory will load many unused 
+// If all bboxes are very small, 0 is recommended, otherwise, shared memory will load many unused
 // data; If bboxes have many overlaps, 1 is recommended to avoid duplicate loads.
-// 1 requires larger shared memory size. It may fail if it is larger than CUDA allowed per-block 
+// 1 requires larger shared memory size. It may fail if it is larger than CUDA allowed per-block
 // shared memory size upper bound. Then you have to use 0.
 #define ROIPOOLING_FEATURE_MAP_USE_SHMEM 1
 
@@ -189,26 +191,27 @@ pluginStatus_t ROIPoolingForwardKernelAlignedLauncher(cudaStream_t stream,
     }
 
     // in the aligned version of ROI Pooling R should always be a multiple of N
-    ASSERT(R % N == 0);
+    PLUGIN_ASSERT(R % N == 0);
 
     // NC/xHW
     int32_t fmapStep = 1;
     switch(DATA_L)
     {
-        case NCHW: fmapStep = 1; 
-            break;
-        case NC4HW: fmapStep = 4;
-            ASSERT((N * C) % 4 == 0);
-            break;
-        case NC32HW: fmapStep = 32;
-            ASSERT((N * C) % 32 == 0);
-            break;
-        default: ASSERT(false);
+    case NCHW: fmapStep = 1; break;
+    case NC4HW:
+        fmapStep = 4;
+        PLUGIN_ASSERT((N * C) % 4 == 0);
+        break;
+    case NC32HW:
+        fmapStep = 32;
+        PLUGIN_ASSERT((N * C) % 32 == 0);
+        break;
+    default: PLUGIN_ASSERT(false);
     }
 
-    if(shmemSize > 48 * 1024)
+    if (shmemSize > 48 * 1024)
     {
-        CHECK(cudaFuncSetAttribute(&ROIPoolingForwardKernelAligned<DATA_T, ROI_T, INFER_ONLY, true>, 
+        PLUGIN_CHECK(cudaFuncSetAttribute(&ROIPoolingForwardKernelAligned<DATA_T, ROI_T, INFER_ONLY, true>,
             cudaFuncAttributeMaxDynamicSharedMemorySize, shmemSize));
     }
     ROIPoolingForwardKernelAligned<DATA_T, ROI_T, INFER_ONLY, fmap_in_shmem><<<N * C, 256, shmemSize, stream>>>(R / N,
@@ -251,18 +254,15 @@ struct roiFwdLaunchConfig
     bool inferOnly;
     roiFwd function;
 
-    roiFwdLaunchConfig(DataType t_rois,
-                       DataType t_featureMap,
-                       DLayout_t l_featureMap,
-                       DataType t_top,
-                       DLayout_t l_top,
-                       bool inferOnly)
+    roiFwdLaunchConfig(
+        DataType t_rois, DataType t_featureMap, DLayout_t l_featureMap, DataType t_top, DLayout_t l_top, bool inferOnly)
         : t_rois(t_rois)
         , t_featureMap(t_featureMap)
         , l_featureMap(l_featureMap)
         , t_top(t_top)
         , l_top(l_top)
         , inferOnly(inferOnly)
+        , function(nullptr)
     {
     }
 

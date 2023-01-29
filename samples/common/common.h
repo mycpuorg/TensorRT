@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -50,8 +51,13 @@
 #include <utility>
 #include <vector>
 
-using namespace nvinfer1;
-using namespace plugin;
+#ifdef _MSC_VER
+#else
+#include <stdio.h>  // fileno
+#include <unistd.h> // lockf
+#endif
+
+#include "safeCommon.h"
 
 #ifdef _MSC_VER
 #define FN_NAME __FUNCTION__
@@ -62,17 +68,6 @@ using namespace plugin;
 #if defined(__aarch64__) || defined(__QNX__)
 #define ENABLE_DLA_API 1
 #endif
-
-#define CHECK(status)                                                                                                  \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        auto ret = (status);                                                                                           \
-        if (ret != 0)                                                                                                  \
-        {                                                                                                              \
-            sample::gLogError << "Cuda failure: " << ret << std::endl;                                                 \
-            abort();                                                                                                   \
-        }                                                                                                              \
-    } while (0)
 
 #define CHECK_RETURN_W_MSG(status, val, errMsg)                                                                        \
     do                                                                                                                 \
@@ -119,21 +114,6 @@ constexpr long double operator"" _MiB(long double val)
     return val * (1 << 20);
 }
 constexpr long double operator"" _KiB(long double val)
-{
-    return val * (1 << 10);
-}
-
-// These is necessary if we want to be able to write 1_GiB instead of 1.0_GiB.
-// Since the return type is signed, -1_GiB will work as expected.
-constexpr long long int operator"" _GiB(unsigned long long val)
-{
-    return val * (1 << 30);
-}
-constexpr long long int operator"" _MiB(unsigned long long val)
-{
-    return val * (1 << 20);
-}
-constexpr long long int operator"" _KiB(unsigned long long val)
 {
     return val * (1 << 10);
 }
@@ -193,7 +173,7 @@ struct SimpleProfiler : public nvinfer1::IProfiler
         auto old_precision = out.precision();
         // Output header
         {
-            out << std::setw(maxLayerNameLength) << layerNameStr << " ";
+            out << std::setfill(' ') << std::setw(maxLayerNameLength) << layerNameStr << " ";
             out << std::setw(12) << "Runtime, "
                 << "%"
                 << " ";
@@ -322,14 +302,14 @@ public:
     {
         return mSize;
     }
-    virtual DataType type() const noexcept
+    virtual nvinfer1::DataType type() const noexcept
     {
         return mType;
     }
     virtual ~HostMemory() {}
 
 protected:
-    HostMemory(std::size_t size, DataType type)
+    HostMemory(std::size_t size, nvinfer1::DataType type)
         : mData{nullptr}
         , mSize(size)
         , mType(type)
@@ -337,10 +317,10 @@ protected:
     }
     void* mData;
     std::size_t mSize;
-    DataType mType;
+    nvinfer1::DataType mType;
 };
 
-template <typename ElemType, DataType dataType>
+template <typename ElemType, nvinfer1::DataType dataType>
 class TypedHostMemory : public HostMemory
 {
 public:
@@ -359,9 +339,9 @@ public:
     }
 };
 
-using FloatMemory = TypedHostMemory<float, DataType::kFLOAT>;
-using HalfMemory = TypedHostMemory<uint16_t, DataType::kHALF>;
-using ByteMemory = TypedHostMemory<uint8_t, DataType::kINT8>;
+using FloatMemory = TypedHostMemory<float, nvinfer1::DataType::kFLOAT>;
+using HalfMemory = TypedHostMemory<uint16_t, nvinfer1::DataType::kHALF>;
+using ByteMemory = TypedHostMemory<uint8_t, nvinfer1::DataType::kINT8>;
 
 inline void* safeCudaMalloc(size_t memSize)
 {
@@ -410,16 +390,6 @@ inline std::unique_ptr<cudaStream_t, decltype(StreamDeleter)> makeCudaStream()
     }
 
     return pStream;
-}
-
-template <typename T>
-std::shared_ptr<T> infer_object(T* obj)
-{
-    if (!obj)
-    {
-        throw std::runtime_error(std::string("Failed to create object"));
-    }
-    return std::shared_ptr<T>(obj);
 }
 
 //! Return vector of indices that puts magnitudes of sequence in descending order.
@@ -532,6 +502,22 @@ inline float getMaxValue(const float* buffer, int64_t size)
     return *std::max_element(buffer, buffer + size);
 }
 
+inline int32_t calculateSoftmax(float* const prob, int32_t const numDigits)
+{
+    ASSERT(prob != nullptr);
+    ASSERT(numDigits == 10);
+    float sum{0.0F};
+    std::transform(prob, prob + numDigits, prob, [&sum](float v) -> float {
+        sum += exp(v);
+        return exp(v);
+    });
+
+    ASSERT(sum != 0.0F);
+    std::transform(prob, prob + numDigits, prob, [sum](float v) -> float { return v / sum; });
+    int32_t idx = std::max_element(prob, prob + numDigits) - prob;
+    return idx;
+}
+
 // Ensures that every tensor used by a network has a dynamic range set.
 //
 // All tensors in a network must have a dynamic range specified if a calibrator is not used.
@@ -547,7 +533,7 @@ inline float getMaxValue(const float* buffer, int64_t size)
 //
 // The default parameter values choosen arbitrarily. Range values should be choosen such that
 // we avoid underflow or overflow. Also range value should be non zero to avoid uniform zero scale tensor.
-inline void setAllDynamicRanges(INetworkDefinition* network, float inRange = 2.0f, float outRange = 4.0f)
+inline void setAllDynamicRanges(nvinfer1::INetworkDefinition* network, float inRange = 2.0f, float outRange = 4.0f)
 {
     // Ensure that all layer inputs have a scale.
     for (int i = 0; i < network->getNbLayers(); i++)
@@ -555,7 +541,7 @@ inline void setAllDynamicRanges(INetworkDefinition* network, float inRange = 2.0
         auto layer = network->getLayer(i);
         for (int j = 0; j < layer->getNbInputs(); j++)
         {
-            ITensor* input{layer->getInput(j)};
+            nvinfer1::ITensor* input{layer->getInput(j)};
             // Optional inputs are nullptr here and are from RNN layers.
             if (input != nullptr && !input->dynamicRangeIsSet())
             {
@@ -572,12 +558,12 @@ inline void setAllDynamicRanges(INetworkDefinition* network, float inRange = 2.0
         auto layer = network->getLayer(i);
         for (int j = 0; j < layer->getNbOutputs(); j++)
         {
-            ITensor* output{layer->getOutput(j)};
+            nvinfer1::ITensor* output{layer->getOutput(j)};
             // Optional outputs are nullptr here and are from RNN layers.
             if (output != nullptr && !output->dynamicRangeIsSet())
             {
                 // Pooling must have the same input and output scales.
-                if (layer->getType() == LayerType::kPOOLING)
+                if (layer->getType() == nvinfer1::LayerType::kPOOLING)
                 {
                     ASSERT(output->setDynamicRange(-inRange, inRange));
                 }
@@ -590,19 +576,20 @@ inline void setAllDynamicRanges(INetworkDefinition* network, float inRange = 2.0
     }
 }
 
-inline void setDummyInt8DynamicRanges(const IBuilderConfig* c, INetworkDefinition* n)
+inline void setDummyInt8DynamicRanges(const nvinfer1::IBuilderConfig* c, nvinfer1::INetworkDefinition* n)
 {
     // Set dummy per-tensor dynamic range if Int8 mode is requested.
-    if (c->getFlag(BuilderFlag::kINT8))
+    if (c->getFlag(nvinfer1::BuilderFlag::kINT8))
     {
-        sample::gLogWarning
-            << "Int8 calibrator not provided. Generating dummy per-tensor dynamic range. Int8 accuracy is not guaranteed."
-            << std::endl;
+        sample::gLogWarning << "Int8 calibrator not provided. Generating dummy per-tensor dynamic range. Int8 accuracy "
+                               "is not guaranteed."
+                            << std::endl;
         setAllDynamicRanges(n);
     }
 }
 
-inline void enableDLA(IBuilder* builder, IBuilderConfig* config, int useDLACore, bool allowGPUFallback = true)
+inline void enableDLA(
+    nvinfer1::IBuilder* builder, nvinfer1::IBuilderConfig* config, int useDLACore, bool allowGPUFallback = true)
 {
     if (useDLACore >= 0)
     {
@@ -614,15 +601,15 @@ inline void enableDLA(IBuilder* builder, IBuilderConfig* config, int useDLACore,
         }
         if (allowGPUFallback)
         {
-            config->setFlag(BuilderFlag::kGPU_FALLBACK);
+            config->setFlag(nvinfer1::BuilderFlag::kGPU_FALLBACK);
         }
-        if (!config->getFlag(BuilderFlag::kINT8))
+        if (!config->getFlag(nvinfer1::BuilderFlag::kINT8))
         {
             // User has not requested INT8 Mode.
             // By default run in FP16 mode. FP32 mode is not permitted.
-            config->setFlag(BuilderFlag::kFP16);
+            config->setFlag(nvinfer1::BuilderFlag::kFP16);
         }
-        config->setDefaultDeviceType(DeviceType::kDLA);
+        config->setDefaultDeviceType(nvinfer1::DeviceType::kDLA);
         config->setDLACore(useDLACore);
     }
 }
@@ -647,33 +634,19 @@ inline uint32_t getElementSize(nvinfer1::DataType t) noexcept
     case nvinfer1::DataType::kFLOAT: return 4;
     case nvinfer1::DataType::kHALF: return 2;
     case nvinfer1::DataType::kBOOL:
+    case nvinfer1::DataType::kUINT8:
     case nvinfer1::DataType::kINT8: return 1;
     }
     return 0;
 }
 
-inline int64_t volume(const nvinfer1::Dims& d)
+inline int64_t volume(nvinfer1::Dims const& dims, int32_t start, int32_t stop)
 {
-    return std::accumulate(d.d, d.d + d.nbDims, 1, std::multiplies<int64_t>());
-}
-
-inline uint32_t elementSize(DataType t) noexcept
-{
-    switch (t)
-    {
-    case DataType::kINT32:
-    case DataType::kFLOAT: return 4;
-    case DataType::kHALF: return 2;
-    case DataType::kBOOL:
-    case DataType::kINT8: return 1;
-    }
-    return 0;
-}
-
-template <typename A, typename B>
-inline A divUp(A x, B n)
-{
-    return (x + n - 1) / n;
+    ASSERT(start >= 0);
+    ASSERT(start <= stop);
+    ASSERT(stop <= dims.nbDims);
+    ASSERT(std::all_of(dims.d + start, dims.d + stop, [](int32_t x) { return x >= 0; }));
+    return std::accumulate(dims.d + start, dims.d + stop, int64_t{1}, std::multiplies<int64_t>{});
 }
 
 template <int C, int H, int W>
@@ -900,23 +873,17 @@ inline std::vector<std::string> splitString(std::string str, char delimiter = ',
     return splitVect;
 }
 
-// Return m rounded up to nearest multiple of n
-inline int roundUp(int m, int n)
-{
-    return ((m + n - 1) / n) * n;
-}
-
-inline int getC(const Dims& d)
+inline int getC(nvinfer1::Dims const& d)
 {
     return d.nbDims >= 3 ? d.d[d.nbDims - 3] : 1;
 }
 
-inline int getH(const Dims& d)
+inline int getH(const nvinfer1::Dims& d)
 {
     return d.nbDims >= 2 ? d.d[d.nbDims - 2] : 1;
 }
 
-inline int getW(const Dims& d)
+inline int getW(const nvinfer1::Dims& d)
 {
     return d.nbDims >= 1 ? d.d[d.nbDims - 1] : 1;
 }
@@ -962,11 +929,26 @@ inline int32_t getSMVersion()
 inline bool isSMSafe()
 {
     const int32_t smVersion = getSMVersion();
-    return smVersion == 0x0700 || smVersion == 0x0702 || smVersion == 0x0705 ||
-           smVersion == 0x0800 || smVersion == 0x0806;
+    return smVersion == 0x0700 || smVersion == 0x0702 || smVersion == 0x0705 || smVersion == 0x0800
+        || smVersion == 0x0806 || smVersion == 0x0807;
 }
 
-inline bool isDataTypeSupported(DataType dataType)
+inline int32_t getMaxPersistentCacheSize()
+{
+    int32_t deviceIndex{};
+    CHECK(cudaGetDevice(&deviceIndex));
+
+    int32_t maxPersistentL2CacheSize;
+#if CUDART_VERSION >= 11030
+    CHECK(cudaDeviceGetAttribute(&maxPersistentL2CacheSize, cudaDevAttrMaxPersistingL2CacheSize, deviceIndex));
+#else
+    maxPersistentL2CacheSize = 0;
+#endif
+
+    return maxPersistentL2CacheSize;
+}
+
+inline bool isDataTypeSupported(nvinfer1::DataType dataType)
 {
     auto builder = SampleUniquePtr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(sample::gLogger.getTRTLogger()));
     if (!builder)
@@ -974,13 +956,188 @@ inline bool isDataTypeSupported(DataType dataType)
         return false;
     }
 
-    if ((dataType == DataType::kINT8 && !builder->platformHasFastInt8())
-        || (dataType == DataType::kHALF && !builder->platformHasFastFp16()))
+    if ((dataType == nvinfer1::DataType::kINT8 && !builder->platformHasFastInt8())
+        || (dataType == nvinfer1::DataType::kHALF && !builder->platformHasFastFp16()))
     {
         return false;
     }
 
     return true;
+}
+
+class FileLock
+{
+public:
+    FileLock(std::string const& fileName)
+        : fileName(fileName)
+    {
+        std::string lockFileName = fileName + ".lock";
+#ifdef _MSC_VER
+        sample::gLogVerbose << "Trying to set exclusive file lock " << lockFileName << std::endl;
+        auto startTime = std::chrono::high_resolution_clock::now();
+        // MS docs said this is a blocking IO if "FILE_FLAG_OVERLAPPED" is not provided
+        lock = CreateFileA(lockFileName.c_str(), GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, 0, NULL);
+        if (lock != INVALID_HANDLE_VALUE)
+        {
+            float const time
+                = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime).count();
+            sample::gLogVerbose << "File locked in " << time << " seconds." << std::endl;
+        }
+        else
+        {
+            throw std::runtime_error("Failed to lock " + lockFileName + "!");
+        }
+#elif defined(__QNX__)
+        // We once enabled the file lock on QNX, lockf(F_TLOCK) return -1 and the reported error is
+        // The error generated was 89
+        // That means : Function not implemented
+#else
+        fp = fopen(lockFileName.c_str(), "wb+");
+        if (!fp)
+        {
+            throw std::runtime_error("Cannot open " + lockFileName + "!");
+        }
+        fd = fileno(fp);
+        sample::gLogVerbose << "Trying to set exclusive file lock " << lockFileName << std::endl;
+        auto startTime = std::chrono::high_resolution_clock::now();
+        auto ret = lockf(fd, F_LOCK, 0);
+        if (ret != 0)
+        {
+            fd = -1;
+            fclose(fp);
+            throw std::runtime_error("Failed to lock " + lockFileName + "!");
+        }
+        float const time = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime).count();
+        sample::gLogVerbose << "File locked in " << time << " seconds." << std::endl;
+#endif
+    }
+
+    ~FileLock()
+    {
+        std::string lockFileName = fileName + ".lock";
+#ifdef _MSC_VER
+        if (lock != INVALID_HANDLE_VALUE)
+        {
+            sample::gLogVerbose << "Trying to remove exclusive file lock " << lockFileName << std::endl;
+            auto startTime = std::chrono::high_resolution_clock::now();
+            CloseHandle(lock);
+            float const time
+                = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime).count();
+            sample::gLogVerbose << "File unlocked in " << time << " seconds." << std::endl;
+        }
+#elif defined(__QNX__)
+        // We once enabled the file lock on QNX, lockf(F_TLOCK) return -1 and the reported error is
+        // The error generated was 89
+        // That means : Function not implemented
+#else
+        if (fd != -1)
+        {
+            sample::gLogVerbose << "Trying to remove exclusive file lock " << lockFileName << std::endl;
+            auto startTime = std::chrono::high_resolution_clock::now();
+            auto ret = lockf(fd, F_ULOCK, 0);
+            if (ret != 0)
+            {
+                sample::gLogVerbose << "Failed to unlock " << lockFileName << "!" << std::endl;
+            }
+            else
+            {
+                fd = -1;
+                fclose(fp);
+                float const time
+                    = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - startTime).count();
+                sample::gLogVerbose << "File unlocked in " << time << " seconds." << std::endl;
+            }
+        }
+#endif
+    }
+
+private:
+    FileLock() = delete;                           // no default ctor
+    FileLock(FileLock const&) = delete;            // no copy ctor
+    FileLock& operator=(FileLock const&) = delete; // no copy assignment
+
+    const std::string fileName; // the file being protected
+#ifdef _MSC_VER
+    HANDLE lock;
+#else
+    FILE* fp;
+    int32_t fd;
+#endif
+};
+
+inline std::vector<char> loadTimingCacheFile(const std::string inFileName)
+{
+    std::unique_ptr<samplesCommon::FileLock> fileLock{new samplesCommon::FileLock(inFileName)};
+    std::ifstream iFile(inFileName, std::ios::in | std::ios::binary);
+    if (!iFile)
+    {
+        sample::gLogWarning << "Could not read timing cache from: " << inFileName
+                            << ". A new timing cache will be generated and written." << std::endl;
+        return std::vector<char>();
+    }
+    iFile.seekg(0, std::ifstream::end);
+    size_t fsize = iFile.tellg();
+    iFile.seekg(0, std::ifstream::beg);
+    std::vector<char> content(fsize);
+    iFile.read(content.data(), fsize);
+    iFile.close();
+    sample::gLogInfo << "Loaded " << fsize << " bytes of timing cache from " << inFileName << std::endl;
+    return content;
+}
+
+inline void saveTimingCacheFile(const std::string outFileName, const nvinfer1::IHostMemory* blob)
+{
+    std::unique_ptr<samplesCommon::FileLock> fileLock{new samplesCommon::FileLock(outFileName)};
+    std::ofstream oFile(outFileName, std::ios::out | std::ios::binary);
+    if (!oFile)
+    {
+        sample::gLogWarning << "Could not write timing cache to: " << outFileName << std::endl;
+        return;
+    }
+    oFile.write((char*) blob->data(), blob->size());
+    oFile.close();
+    sample::gLogInfo << "Saved " << blob->size() << " bytes of timing cache to " << outFileName << std::endl;
+}
+
+inline void updateTimingCacheFile(std::string const fileName, nvinfer1::ITimingCache const* timingCache)
+{
+    // Prepare empty timingCache in case that there is no existing file to read
+    std::unique_ptr<nvinfer1::IBuilder> builder{nvinfer1::createInferBuilder(sample::gLogger.getTRTLogger())};
+    std::unique_ptr<nvinfer1::IBuilderConfig> config{builder->createBuilderConfig()};
+    std::unique_ptr<nvinfer1::ITimingCache> fileTimingCache{config->createTimingCache(static_cast<const void*>(nullptr), 0)};
+
+    std::unique_ptr<samplesCommon::FileLock> fileLock{new samplesCommon::FileLock(fileName)};
+    std::ifstream iFile(fileName, std::ios::in | std::ios::binary);
+    if (iFile)
+    {
+        iFile.seekg(0, std::ifstream::end);
+        size_t fsize = iFile.tellg();
+        iFile.seekg(0, std::ifstream::beg);
+        std::vector<char> content(fsize);
+        iFile.read(content.data(), fsize);
+        iFile.close();
+        sample::gLogInfo << "Loaded " << fsize << " bytes of timing cache from " << fileName << std::endl;
+        fileTimingCache.reset(config->createTimingCache(static_cast<const void*>(content.data()), content.size()));
+        if (!fileTimingCache)
+        {
+            throw std::runtime_error("Failed to create timingCache from " + fileName + "!");
+        }
+    }
+    fileTimingCache->combine(*timingCache, false);
+    std::unique_ptr<nvinfer1::IHostMemory> blob{fileTimingCache->serialize()};
+    if (!blob)
+    {
+        throw std::runtime_error("Failed to serialize ITimingCache!");
+    }
+    std::ofstream oFile(fileName, std::ios::out | std::ios::binary);
+    if (!oFile)
+    {
+        sample::gLogWarning << "Could not write timing cache to: " << fileName << std::endl;
+        return;
+    }
+    oFile.write((char*) blob->data(), blob->size());
+    oFile.close();
+    sample::gLogInfo << "Saved " << blob->size() << " bytes of timing cache to " << fileName << std::endl;
 }
 
 } // namespace samplesCommon

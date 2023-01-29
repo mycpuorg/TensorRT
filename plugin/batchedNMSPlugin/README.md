@@ -35,7 +35,7 @@ The scores input are of shape `[batch_size, number_boxes, number_classes]`. Each
 The boxes input and scores input generates the following four outputs:
 
 - `num_detections`
-The `num_detections` input are of shape `[batch_size, 1]`. The last dimension of size 1 is an INT32 scalar indicating the number of valid detections per batch item. It can be less than `keepTopK`. Only the top `num_detections[i]` entries in `nmsed_boxes[i]`, `nmsed_scores[i]` and `nmsed_classes[i]` are valid.
+The `num_detections` output is of shape `[batch_size]`. It is an int32 tensor indicating the number of valid detections per batch item. It can be less than `keepTopK`. Only the top `num_detections[i]` entries in `nmsed_boxes[i]`, `nmsed_scores[i]` and `nmsed_classes[i]` are valid.
 
 - `nmsed_boxes`
 A `[batch_size, keepTopK, 4]` float32 tensor containing the coordinates of non-max suppressed boxes.
@@ -58,13 +58,14 @@ The `batchedNMSPlugin` is created using `BatchedNMSPluginCreator` with `NMSParam
 |`bool`    |`shareLocation`           |If set to `true`, the boxes input are shared across all classes. If set to `false`, the boxes input should account for per-class box data.
 |`int`     |`backgroundLabelId`       |The label ID for the background class. If there is no background class, set it to `-1`.
 |`int`     |`numClasses`              |The number of classes in the network.
-|`int`     |`topK`                    |The number of bounding boxes to be fed into the NMS step.
+|`int`     |`topK`                    |The number of bounding boxes to be fed into the NMS step. Maximum allowed value is 4096.
 |`int`     |`keepTopK`                |The number of total bounding boxes to be kept per-image after the NMS step. Should be less than or equal to the `topK` value.
 |`float`   |`scoreThreshold`          |The scalar threshold for score (low scoring boxes are removed).
 |`float`   |`iouThreshold`            |The scalar threshold for IOU (new boxes that have high IOU overlap with previously selected boxes are removed).
 |`bool`    |`isNormalized`            |Set to `false` if the box coordinates are not normalized, meaning they are not in the range `[0,1]`. Defaults to `true`.
 |`bool`    |`clipBoxes`               |Forcibly restrict bounding boxes to the normalized range `[0,1]`. Only applicable if `isNormalized` is also `true`. Defaults to `true`.
-|`int`     |`scoreBits`               |The number of bits to represent the score values during radix sort. The number of bits to represent score values(confidences) during radix sort. This valid range is 0 < scoreBits <= 10. The default value is 16(which means to use full bits in radix sort). Setting this parameter to any invalid value will result in the same effect as setting it to 16. This parameter can be tuned to strike for a best trade-off between performance and accuracy. Lowering scoreBits will improve performance but with some minor degradation to the accuracy. This parameter is only valid for FP16 data type for now.
+|`int`     |`scoreBits`               |The number of bits to represent score values(confidences) during radix sort. This valid range is 0 < scoreBits <= 10. The default value is 16(which means to use full bits in radix sort). Setting this parameter to any invalid value will result in the same effect as setting it to 16. This parameter can be tuned to strike for a best trade-off between performance and accuracy. Lowering scoreBits will improve performance but with some minor degradation to the accuracy. This parameter is only valid for FP16 data type for now.
+|`bool`    |`caffeSemantics`          |Set to `false` to disable [Caffe semantics](https://github.com/weiliu89/caffe/blob/ssd/src/caffe/util/bbox_util.cpp#L92-L97) for IOU calculation. In Caffe, `width` and `height` are incremented by '1' if bbox coordinates are not normalized. Defaults to `true`.
 
 ## Algorithms
 
@@ -104,6 +105,9 @@ documentation.
 
 
 ## Changelog
+
+January 2022
+BatchedNMS plugin now supports IOU calculation that matches Torch/Tensorflow and defaults to the [Caffe semantics](https://github.com/weiliu89/caffe/blob/ssd/src/caffe/util/bbox_util.cpp#L92-L97). This is selected using an optional `caffeSemantics` plugin attribute.
 
 May 2019
 This is the first release of this `README.md` file.

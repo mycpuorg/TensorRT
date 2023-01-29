@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,7 +16,7 @@
  */
 
 #include "generateDetectionPlugin.h"
-#include "plugin.h"
+#include "common/plugin.h"
 #include <algorithm>
 #include <cuda_runtime_api.h>
 
@@ -37,7 +38,7 @@ std::vector<PluginField> GenerateDetectionPluginCreator::mPluginAttributes;
 
 GenerateDetectionPluginCreator::GenerateDetectionPluginCreator() noexcept
 {
-
+    mPluginAttributes.clear();
     mPluginAttributes.emplace_back(PluginField("num_classes", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("keep_topk", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("score_threshold", nullptr, PluginFieldType::kFLOAT32, 1));
@@ -51,62 +52,81 @@ GenerateDetectionPluginCreator::GenerateDetectionPluginCreator() noexcept
 const char* GenerateDetectionPluginCreator::getPluginName() const noexcept
 {
     return GENERATEDETECTION_PLUGIN_NAME;
-};
+}
 
 const char* GenerateDetectionPluginCreator::getPluginVersion() const noexcept
 {
     return GENERATEDETECTION_PLUGIN_VERSION;
-};
+}
 
 const PluginFieldCollection* GenerateDetectionPluginCreator::getFieldNames() noexcept
 {
     return &mFC;
-};
+}
 
 IPluginV2Ext* GenerateDetectionPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    auto image_size = TLTMaskRCNNConfig::IMAGE_SHAPE;
-    const PluginField* fields = fc->fields;
-    for (int i = 0; i < fc->nbFields; ++i)
+    try
     {
-        const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "num_classes"))
+        auto image_size = TLTMaskRCNNConfig::IMAGE_SHAPE;
+        PluginField const* fields = fc->fields;
+        plugin::validateRequiredAttributesExist({"num_classes", "keep_topk", "score_threshold", "iou_threshold"}, fc);
+
+        for (int32_t i = 0; i < fc->nbFields; ++i)
         {
-            assert(fields[i].type == PluginFieldType::kINT32);
-            mNbClasses = *(static_cast<const int*>(fields[i].data));
+            const char* attrName = fields[i].name;
+            if (!strcmp(attrName, "num_classes"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                mNbClasses = *(static_cast<int32_t const*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "keep_topk"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                mKeepTopK = *(static_cast<int32_t const*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "score_threshold"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                mScoreThreshold = *(static_cast<float const*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "iou_threshold"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                mIOUThreshold = *(static_cast<float const*>(fields[i].data));
+            }
+            if (!strcmp(attrName, "image_size"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                const auto dims = static_cast<int32_t const*>(fields[i].data);
+                std::copy_n(dims, 3, image_size.d);
+            }
         }
-        if (!strcmp(attrName, "keep_topk"))
-        {
-            assert(fields[i].type == PluginFieldType::kINT32);
-            mKeepTopK = *(static_cast<const int*>(fields[i].data));
-        }
-        if (!strcmp(attrName, "score_threshold"))
-        {
-            assert(fields[i].type == PluginFieldType::kFLOAT32);
-            mScoreThreshold = *(static_cast<const float*>(fields[i].data));
-        }
-        if (!strcmp(attrName, "iou_threshold"))
-        {
-            assert(fields[i].type == PluginFieldType::kFLOAT32);
-            mIOUThreshold = *(static_cast<const float*>(fields[i].data));
-        }
-        if (!strcmp(attrName, "image_size"))
-        {
-            assert(fields[i].type == PluginFieldType::kINT32);
-            const auto dims = static_cast<const int32_t*>(fields[i].data);
-            std::copy_n(dims, 3, image_size.d);
-        }
+        return new GenerateDetection(mNbClasses, mKeepTopK, mScoreThreshold, mIOUThreshold, image_size);
     }
-    return new GenerateDetection(mNbClasses, mKeepTopK, mScoreThreshold, mIOUThreshold, image_size);
-};
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
+}
 
-IPluginV2Ext* GenerateDetectionPluginCreator::deserializePlugin(const char* name, const void* data, size_t length) noexcept
+IPluginV2Ext* GenerateDetectionPluginCreator::deserializePlugin(
+    const char* name, const void* data, size_t length) noexcept
 {
-    return new GenerateDetection(data, length);
-};
+    try
+    {
+        return new GenerateDetection(data, length);
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
+}
 
-GenerateDetection::GenerateDetection(
-    int num_classes, int keep_topk, float score_threshold, float iou_threshold, const nvinfer1::Dims& image_size) noexcept
+GenerateDetection::GenerateDetection(int num_classes, int keep_topk, float score_threshold, float iou_threshold,
+    const nvinfer1::Dims& image_size)
     : mNbClasses(num_classes)
     , mKeepTopK(keep_topk)
     , mScoreThreshold(score_threshold)
@@ -114,10 +134,12 @@ GenerateDetection::GenerateDetection(
     , mImageSize(image_size)
 {
     mBackgroundLabel = 0;
-    assert(mNbClasses > 0);
-    assert(mKeepTopK > 0);
-    assert(score_threshold >= 0.0f);
-    assert(iou_threshold > 0.0f);
+    PLUGIN_VALIDATE(mNbClasses > 0);
+    PLUGIN_VALIDATE(mKeepTopK > 0);
+    PLUGIN_VALIDATE(score_threshold >= 0.0f);
+    PLUGIN_VALIDATE(iou_threshold > 0.0f);
+    PLUGIN_VALIDATE(mImageSize.nbDims == 3);
+    PLUGIN_VALIDATE(mImageSize.d[0] > 0 && mImageSize.d[1] > 0 && mImageSize.d[2] > 0);
 
     mParam.backgroundLabelId = 0;
     mParam.numClasses = mNbClasses;
@@ -126,18 +148,18 @@ GenerateDetection::GenerateDetection(
     mParam.iouThreshold = mIOUThreshold;
 
     mType = DataType::kFLOAT;
-};
+}
 
 int GenerateDetection::getNbOutputs() const noexcept
 {
     return 1;
-};
+}
 
 int GenerateDetection::initialize() noexcept
 {
     // Init the regWeight [10, 10, 5, 5]
     mRegWeightDevice = std::make_shared<CudaBind<float>>(4);
-    CUASSERT(cudaMemcpy(static_cast<void*>(mRegWeightDevice->mPtr),
+    PLUGIN_CUASSERT(cudaMemcpy(static_cast<void*>(mRegWeightDevice->mPtr),
         static_cast<const void*>(TLTMaskRCNNConfig::DETECTION_REG_WEIGHTS), sizeof(float) * 4, cudaMemcpyHostToDevice));
 
     //@Init the mValidCnt and mDecodedBboxes for max batch size
@@ -145,43 +167,51 @@ int GenerateDetection::initialize() noexcept
 
     mValidCnt = std::make_shared<CudaBind<int>>(mMaxBatchSize);
 
-    CUASSERT(cudaMemcpy(
+    PLUGIN_CUASSERT(cudaMemcpy(
         mValidCnt->mPtr, static_cast<void*>(tempValidCnt.data()), sizeof(int) * mMaxBatchSize, cudaMemcpyHostToDevice));
 
     return 0;
-};
+}
 
-void GenerateDetection::terminate() noexcept {};
+void GenerateDetection::terminate() noexcept {}
 
 void GenerateDetection::destroy() noexcept
 {
     delete this;
-};
+}
 
 bool GenerateDetection::supportsFormat(DataType type, PluginFormat format) const noexcept
 {
     return (type == DataType::kFLOAT && format == PluginFormat::kLINEAR);
-};
+}
 
 const char* GenerateDetection::getPluginType() const noexcept
 {
     return "GenerateDetection_TRT";
-};
+}
 
 const char* GenerateDetection::getPluginVersion() const noexcept
 {
     return "1";
-};
+}
 
 IPluginV2Ext* GenerateDetection::clone() const noexcept
 {
-    return new GenerateDetection(*this);
-};
+    try
+    {
+        return new GenerateDetection(*this);
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
+}
 
 void GenerateDetection::setPluginNamespace(const char* libNamespace) noexcept
 {
     mNameSpace = libNamespace;
-};
+}
 
 const char* GenerateDetection::getPluginNamespace() const noexcept
 {
@@ -191,7 +221,7 @@ const char* GenerateDetection::getPluginNamespace() const noexcept
 size_t GenerateDetection::getSerializationSize() const noexcept
 {
     return sizeof(int) * 2 + sizeof(float) * 2 + sizeof(int) * 2 + sizeof(nvinfer1::Dims);
-};
+}
 
 void GenerateDetection::serialize(void* buffer) const noexcept
 {
@@ -203,10 +233,10 @@ void GenerateDetection::serialize(void* buffer) const noexcept
     write(d, mMaxBatchSize);
     write(d, mAnchorsCnt);
     write(d, mImageSize);
-    ASSERT(d == a + getSerializationSize());
-};
+    PLUGIN_ASSERT(d == a + getSerializationSize());
+}
 
-GenerateDetection::GenerateDetection(const void* data, size_t length) noexcept
+GenerateDetection::GenerateDetection(const void* data, size_t length)
 {
     const char *d = reinterpret_cast<const char*>(data), *a = d;
     int num_classes = read<int>(d);
@@ -216,7 +246,7 @@ GenerateDetection::GenerateDetection(const void* data, size_t length) noexcept
     mMaxBatchSize = read<int>(d);
     mAnchorsCnt = read<int>(d);
     mImageSize = read<nvinfer1::Dims3>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 
     mNbClasses = num_classes;
     mKeepTopK = keep_topk;
@@ -230,34 +260,34 @@ GenerateDetection::GenerateDetection(const void* data, size_t length) noexcept
     mParam.iouThreshold = mIOUThreshold;
 
     mType = DataType::kFLOAT;
-};
+}
 
 void GenerateDetection::check_valid_inputs(const nvinfer1::Dims* inputs, int nbInputDims) noexcept
 {
     // classifier_delta_bbox[N, anchors, num_classes*4, 1, 1]
     // classifier_class[N, anchors, num_classes, 1, 1]
     // rpn_rois[N, anchors, 4]
-    assert(nbInputDims == 3);
+    PLUGIN_ASSERT(nbInputDims == 3);
 
     // score
-    assert(inputs[1].nbDims == 4 && inputs[1].d[1] == mNbClasses);
+    PLUGIN_ASSERT(inputs[1].nbDims == 4 && inputs[1].d[1] == mNbClasses);
     // delta_bbox
-    assert(inputs[0].nbDims == 4 && inputs[0].d[1] == mNbClasses * 4);
+    PLUGIN_ASSERT(inputs[0].nbDims == 4 && inputs[0].d[1] == mNbClasses * 4);
     // roi
-    assert(inputs[2].nbDims == 2 && inputs[2].d[1] == 4);
-};
+    PLUGIN_ASSERT(inputs[2].nbDims == 2 && inputs[2].d[1] == 4);
+}
 
 size_t GenerateDetection::getWorkspaceSize(int batch_size) const noexcept
 {
     RefineDetectionWorkSpace refine(batch_size, mAnchorsCnt, mParam, mType);
     return refine.totalSize;
-};
+}
 
 Dims GenerateDetection::getOutputDimensions(int index, const Dims* inputs, int nbInputDims) noexcept
 {
 
     check_valid_inputs(inputs, nbInputDims);
-    assert(index == 0);
+    PLUGIN_ASSERT(index == 0);
 
     // [N, anchors, (y1, x1, y2, x2, class_id, score)]
     nvinfer1::Dims detections;
@@ -290,9 +320,9 @@ int32_t GenerateDetection::enqueue(
             inputs[2],       // inputs[ROI]
             detections);
 
-    assert(status == cudaSuccess);
+    PLUGIN_ASSERT(status == cudaSuccess);
     return status;
-};
+}
 
 DataType GenerateDetection::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
 {
@@ -319,7 +349,7 @@ void GenerateDetection::configurePlugin(const Dims* inputDims, int nbInputs, con
     const bool* outputIsBroadcast, PluginFormat floatFormat, int maxBatchSize) noexcept
 {
     check_valid_inputs(inputDims, nbInputs);
-    assert(inputDims[0].d[0] == inputDims[1].d[0] && inputDims[1].d[0] == inputDims[2].d[0]);
+    PLUGIN_ASSERT(inputDims[0].d[0] == inputDims[1].d[0] && inputDims[1].d[0] == inputDims[2].d[0]);
 
     mAnchorsCnt = inputDims[2].d[0];
     mType = inputTypes[0];

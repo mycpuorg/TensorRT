@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +15,7 @@
 # limitations under the License.
 #
 
-from polygraphy import func, mod, util
+from polygraphy import func, mod, util, constants
 from polygraphy.backend.trt import util as trt_util
 from polygraphy.common.interface import TypedDict
 from polygraphy.json import Decoder, Encoder, add_json_methods
@@ -31,7 +32,7 @@ trt = mod.lazy_import("tensorrt")
 
 
 @mod.export()
-class Algorithm(object):
+class Algorithm:
     """
     Represents a TensorRT algorithm variant, which can be uniquely represented
     by an implementation ID and tactic ID.
@@ -51,7 +52,7 @@ class Algorithm(object):
         """
 
         def unpack_io_info(io_info):
-            return (io_info.tensor_format, io_info.dtype)
+            return (io_info.tensor_format, io_info.dtype, tuple(io_info.strides))
 
         implementation = algorithm.algorithm_variant.implementation
         tactic = algorithm.algorithm_variant.tactic
@@ -69,23 +70,35 @@ class Algorithm(object):
                     The implementation for this Algorithm.
             tactic (int):
                     The tactic for this Algorithm.
-            inputs (List[Tuple[trt.TensorFormat, trt.DataType]]):
-                    A list of tuples containg a TensorRT tensor format and data type for each input.
-            outputs (List[Tuple[trt.TensorFormat, trt.DataType]]):
-                    A list of tuples containg a TensorRT tensor format and data type for each output.
+            inputs (List[Tuple[trt.TensorFormat, trt.DataType, Sequence[int]]]):
+                    A list of tuples containg a TensorRT tensor format, data type, and strides for each input.
+            outputs (List[Tuple[trt.TensorFormat, trt.DataType, Sequence[int]]]):
+                    A list of tuples containg a TensorRT tensor format, data type, and strides for each output.
         """
 
         def validate_meta(meta):
-            for (fmt, dtype) in meta:
+            for index, tup in enumerate(meta):
+                # Fill in empty tuples for missing strides.
+                if len(tup) == 2:
+                    fmt, dtype = tup
+                    strides = tuple()
+                    tup = (fmt, dtype, strides)
+                    meta[index] = tup
+
+                fmt, dtype, strides = tup
+
                 if not isinstance(fmt, trt.TensorFormat):
                     G_LOGGER.critical(
-                        "'format' must be an instance of trt.TensorFormat, but is: {:}.\n"
-                        "Note: Provided input/output metadata was: {:}".format(fmt, meta)
+                        f"'format' must be an instance of trt.TensorFormat, but is: {fmt}.\nNote: Provided input/output metadata was: {meta}"
                     )
                 if not isinstance(dtype, trt.DataType):
                     G_LOGGER.critical(
-                        "'dtype' must be an instance of trt.DataType, but is: {:}.\n"
-                        "Note: Provided input/output metadata was: {:}".format(dtype, meta)
+                        f"'dtype' must be an instance of trt.DataType, but is: {dtype}.\nNote: Provided input/output metadata was: {meta}"
+                    )
+
+                if not isinstance(strides, tuple):
+                    G_LOGGER.critical(
+                        f"'strides' must be a tuple, but is: {strides}.\nNote: Provided input/output metadata was: {meta}"
                     )
             return meta
 
@@ -97,11 +110,9 @@ class Algorithm(object):
 
     def __str__(self):
         def io_str(io):
-            return tuple((str(tensor_format), str(dtype)) for tensor_format, dtype in io)
+            return tuple((str(tensor_format), str(dtype), str(strides)) for tensor_format, dtype, strides in io)
 
-        return "(Implementation: {:}, Tactic: {:}) | Inputs: {:} | Outputs: {:}".format(
-            self.implementation, self.tactic, io_str(self.inputs), io_str(self.outputs)
-        )
+        return f"(Implementation: {self.implementation}, Tactic: {self.tactic}) | Inputs: {io_str(self.inputs)} | Outputs: {io_str(self.outputs)}"
 
     def __eq__(self, other):
         tactic_matches = self.implementation == other.implementation and self.tactic == other.tactic
@@ -116,8 +127,8 @@ class Algorithm(object):
 def encode(algo):
     def encode_algo_io(io_list):
         encoded = []
-        for fmt, dtype in io_list:
-            encoded.append((str(fmt), str(dtype)))
+        for fmt, dtype, strides in io_list:
+            encoded.append((str(fmt), str(dtype), strides))
         return encoded
 
     return {
@@ -132,8 +143,12 @@ def encode(algo):
 def decode(dct):
     def decode_algo_io(io_list):
         decoded = []
-        for fmt, dtype in io_list:
-            decoded.append((util.getattr_nested(trt, fmt), util.getattr_nested(trt, dtype)))
+        for tup in io_list:
+            fmt, dtype, strides = util.unpack_args(tup, 3)
+            entry = [util.getattr_nested(trt, fmt), util.getattr_nested(trt, dtype)]
+            if strides is not None:
+                entry.append(tuple(strides))
+            decoded.append(tuple(entry))
         return decoded
 
     return Algorithm(
@@ -163,14 +178,13 @@ class TacticReplayData(TypedDict(lambda: str, lambda: Algorithm)):
         Returns:
             TacticReplayData: self, to allow for method chaining.
         """
-        if not isinstance(algorithm, Algorithm):
-            G_LOGGER.critical("Tactic replay data expects Algorithm instances, not: {:}".format(algorithm))
-
-        self.dct[name] = algorithm
+        self[name] = algorithm
         return self
 
     def __str__(self):
-        return "\n".join(["Layer: {:}\n\tAlgorithm: {:}".format(name, algorithm) for (name, algorithm) in self.items()])
+        return "\n".join(
+            [f"Layer: {name}\n{constants.TAB}Algorithm: {algorithm}" for (name, algorithm) in self.items()]
+        )
 
 
 @Encoder.register(TacticReplayData)
@@ -313,13 +327,12 @@ def TacticReplayer(replay):
 
             if context.name not in self.data:
                 G_LOGGER.warning(
-                    "Layer: {:} was not found in the tactic replay. Falling back to default tactics.".format(
-                        context.name
-                    )
+                    f"Layer: {context.name} was not found in the tactic replay. Falling back to default tactics."
                 )
+                sep = f"\n{constants.TAB}"
                 G_LOGGER.warning(
                     "Has the network changed since the tactic replay file was generated?\n"
-                    "Note: Layers in the tactic replay are:\n\t{:}".format("\n\t".join(self.data.keys())),
+                    f"Note: Layers in the tactic replay are:{sep}{sep.join(self.data.keys())}",
                     mode=LogMode.ONCE,
                 )
                 return default_choices
@@ -329,12 +342,11 @@ def TacticReplayer(replay):
             tactic_choices = [Algorithm.from_trt(context, algo) for algo in choices]
 
             if to_select not in tactic_choices:
+                sep = f"\n{constants.TAB}"
                 G_LOGGER.critical(
-                    "Layer: {:} | Tactic in replay was not provided by TensorRT as a choice for this layer.\n"
-                    "Has the network or builder configuration changed since the replay file was generated?\n"
-                    "Note: Tactic in replay was:\n\t{:}\nProvided choices were:\n\t{:}".format(
-                        context.name, to_select, "\n\t".join(map(str, tactic_choices))
-                    )
+                    f"Layer: {context.name} | Tactic in replay was not provided by TensorRT as a choice for this layer.\n"
+                    f"Has the network or builder configuration changed since the replay file was generated?\n"
+                    f"Note: Tactic in replay was:{sep}{to_select}\nProvided choices were:{sep}{sep.join(map(str, tactic_choices))}"
                 )
 
             return [tactic_choices.index(to_select)]
@@ -356,10 +368,8 @@ def TacticReplayer(replay):
                     selected = Algorithm.from_trt(context, choice)
                     if to_select != selected:
                         G_LOGGER.critical(
-                            "Layer: {:} | TensorRT selected a tactic different than the one specified in the tactic replay.\n"
-                            "Note: Tactic in replay was:\n\t{:}, but TensorRT selected:\n\t{:}".format(
-                                context.name, to_select, selected
-                            )
+                            f"Layer: {context.name} | TensorRT selected a tactic different than the one specified in the tactic replay."
+                            f"\nNote: Tactic in replay was:\n{constants.TAB}{to_select}, but TensorRT selected:\n{constants.TAB}{selected}"
                         )
 
     return TacticReplayerClass()

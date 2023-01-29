@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,7 +23,7 @@
 
 #include "NvInferPlugin.h"
 
-#include "bertCommon.h"
+#include "common/bertCommon.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -97,6 +98,11 @@ private:
     bert::WeightsWithOwnership mBias;
 
     size_t mParamWordsize;
+
+    using IPluginV2::getOutputDimensions;
+    using IPluginV2::getWorkspaceSize;
+    using IPluginV2::enqueue;
+    using IPluginV2Ext::configurePlugin;
 };
 
 class SkipLayerNormPluginDynamicCreator : public nvinfer1::IPluginCreator
@@ -182,7 +188,11 @@ private:
     bert::WeightsWithOwnership mBias;
 
     size_t mParamWordsize;
-    bool mParamsOnDevice;
+
+    using IPluginV2::getOutputDimensions;
+    using IPluginV2::getWorkspaceSize;
+    using IPluginV2::enqueue;
+    using IPluginV2Ext::configurePlugin;
 };
 
 class SkipLayerNormVarSeqlenPluginCreator : public nvinfer1::IPluginCreator

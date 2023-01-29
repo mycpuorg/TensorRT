@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,22 +15,21 @@
  * limitations under the License.
  */
 
-#include "NvInfer.h"
-#include "bertCommon.h"
 #include "qkvToContextInt8InterleavedPlugin.h"
-#include "serialize.hpp"
-
-#include <cassert>
+#include "NvInfer.h"
+#include "common/bertCommon.h"
+#include "common/plugin.h"
+#include "common/serialize.hpp"
 #include <cstring>
 #include <cuda.h>
 #include <iostream>
 #include <tuple>
 #include <vector>
 
-#include <fused_multihead_attention_v2.h>
+#include "bertQKVToContextPlugin/fused_multihead_attention_v2/include/fused_multihead_attention_v2.h"
 
 using namespace nvinfer1;
-// using namespace fused_multihead_attention;
+using namespace nvinfer1::plugin;
 
 namespace bert
 {
@@ -49,7 +49,7 @@ REGISTER_TENSORRT_PLUGIN(QKVToContextInterleavedPluginCreator);
 constexpr uint32_t IIDX = 0; // index of the input tensor
 
 QKVToContextInterleavedPlugin::QKVToContextInterleavedPlugin(
-    const std::string name, const int hiddenSize, const int numHeads, const float dqProbs)
+    std::string const name, int const hiddenSize, int const numHeads, float const dqProbs, bool const useInt8ScaleMax)
     : mLayerName(name)
     , mS(0)
     , mB(0)
@@ -57,12 +57,13 @@ QKVToContextInterleavedPlugin::QKVToContextInterleavedPlugin(
     , mHiddenSize(hiddenSize)
     , mNumHeads(numHeads)
     , mDqProbs(dqProbs)
-
+    , mUseInt8ScaleMax(useInt8ScaleMax)
 {
     mSM = getSMVersion();
     // variable sequence length is only supported with the fused MHA kernels
     // we should not override mS!
-    assert((mSM == kSM_AMPERE_100 || mSM == kSM_AMPERE_10X || mSM == kSM_TURING || mSM == kSM_XAVIER)
+    PLUGIN_VALIDATE((mSM == kSM_AMPERE_100 || mSM == kSM_AMPERE_10X || mSM == kSM_AMPERE_10B || mSM == kSM_TURING
+               || mSM == kSM_XAVIER || mSM == kSM_ADA_10X || mSM == kSM_HOPPER_100)
         && "requesting maxSeqlen not compatible with GPU arch");
     // the layout changes: SxB will be a combined \sum_i s_i and hdim will be the 2nd dimension instead of the third
     mXmmaKernel = getXMMAKernelsV2(DATA_TYPE_INT8, mSM);
@@ -78,25 +79,34 @@ QKVToContextInterleavedPlugin::QKVToContextInterleavedPlugin(const std::string n
     deserialize_value(&data, &length, &mS);
     deserialize_value(&data, &length, &mB);
     deserialize_value(&data, &length, &mDqProbs);
+    deserialize_value(&data, &length, &mUseInt8ScaleMax);
 }
 
 int QKVToContextInterleavedPlugin::getSMVersion() const noexcept
 {
     int device{-1};
-    CHECK(cudaGetDevice(&device));
+    PLUGIN_CHECK(cudaGetDevice(&device));
     cudaDeviceProp props;
-    CHECK(cudaGetDeviceProperties(&props, device));
-    return props.major * 10 + props.minor;
+    PLUGIN_CHECK(cudaGetDeviceProperties(&props, device));
+    return getTrtSMVersionDec(props.major, props.minor);
 }
 
 // IPluginV2DynamicExt Methods
 nvinfer1::IPluginV2DynamicExt* QKVToContextInterleavedPlugin::clone() const noexcept
 {
-    QKVToContextInterleavedPlugin* ret
-        = new QKVToContextInterleavedPlugin(mLayerName, mHiddenSize, mNumHeads, mDqProbs);
+    try
+    {
+        QKVToContextInterleavedPlugin* ret
+            = new QKVToContextInterleavedPlugin(mLayerName, mHiddenSize, mNumHeads, mDqProbs, mUseInt8ScaleMax);
 
-    ret->setPluginNamespace(mNamespace.c_str());
-    return ret;
+        ret->setPluginNamespace(mNamespace.c_str());
+        return ret;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 DimsExprs QKVToContextInterleavedPlugin::getOutputDimensions(
@@ -106,7 +116,7 @@ DimsExprs QKVToContextInterleavedPlugin::getOutputDimensions(
     // Output SHAPE is 1x(N*H)xTotalx1
     // In SupportsFormatCombination, we force the layout to be CHW, i.e.
     // Input: 3xNx(H/32)xsumSx32, Output: 1xNx(H/32)xsumSx32
-    assert(outputIndex == 0);
+    PLUGIN_ASSERT(outputIndex == 0);
     // Copy over everything
     DimsExprs output(inputs[IIDX]);
     // output.d[0] = exprBuilder.constant(1);
@@ -118,8 +128,8 @@ DimsExprs QKVToContextInterleavedPlugin::getOutputDimensions(
 bool QKVToContextInterleavedPlugin::supportsFormatCombination(
     int pos, const PluginTensorDesc* inOut, int nbInputs, int nbOutputs) noexcept
 {
-    assert(nbInputs == 3);
-    assert(nbOutputs == 1);
+    PLUGIN_ASSERT(nbInputs == 3);
+    PLUGIN_ASSERT(nbOutputs == 1);
     // 3 inputs:
     // 0: qkv
     // 1: cu_seqlens
@@ -159,7 +169,7 @@ size_t QKVToContextInterleavedPlugin::getWorkspaceSize(
 DataType QKVToContextInterleavedPlugin::getOutputDataType(
     int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
 {
-    assert(index == 0);
+    PLUGIN_ASSERT(index == 0);
     return DataType::kINT8;
 }
 
@@ -189,7 +199,7 @@ void QKVToContextInterleavedPlugin::terminate() noexcept {}
 size_t QKVToContextInterleavedPlugin::getSerializationSize() const noexcept
 {
     return sizeof(mNumHeads) + sizeof(mHeadSize) + sizeof(mHiddenSize) + sizeof(mSM) + sizeof(mS) + sizeof(mB)
-        + sizeof(mDqProbs);
+        + sizeof(mDqProbs) + sizeof(mUseInt8ScaleMax);
 }
 
 void QKVToContextInterleavedPlugin::serialize(void* buffer) const noexcept
@@ -201,6 +211,7 @@ void QKVToContextInterleavedPlugin::serialize(void* buffer) const noexcept
     serialize_value(&buffer, mS);
     serialize_value(&buffer, mB);
     serialize_value(&buffer, mDqProbs);
+    serialize_value(&buffer, mUseInt8ScaleMax);
 }
 
 void QKVToContextInterleavedPlugin::destroy() noexcept
@@ -264,12 +275,20 @@ int QKVToContextInterleavedPlugin::enqueue(const PluginTensorDesc* inputDesc, co
     params.qkv_stride_in_bytes = total;
     params.o_stride_in_bytes = total;
 
-    params.use_int8_scale_max = true;
+    params.use_int8_scale_max = mUseInt8ScaleMax;
     params.enable_i2f_trick
         = -double(1 << 22) * double(scaleBmm2) <= -128.F && double(1 << 22) * double(scaleBmm2) >= 127.F;
 
-    mXmmaKernel->run(params, stream);
-    return cudaPeekAtLastError();
+    try
+    {
+        mXmmaKernel->run(params, stream);
+        return cudaPeekAtLastError();
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+        return -1;
+    }
 }
 
 QKVToContextInterleavedPluginCreator::QKVToContextInterleavedPluginCreator()
@@ -278,6 +297,7 @@ QKVToContextInterleavedPluginCreator::QKVToContextInterleavedPluginCreator()
     mPluginAttributes.emplace_back(PluginField("hidden_size", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("num_heads", nullptr, PluginFieldType::kINT32, 1));
     mPluginAttributes.emplace_back(PluginField("dq_probs", nullptr, PluginFieldType::kFLOAT32, 1));
+    mPluginAttributes.emplace_back(PluginField("use_int8_scale_max", nullptr, PluginFieldType::kINT32, 1));
 
     mFC.nbFields = mPluginAttributes.size();
     mFC.fields = mPluginAttributes.data();
@@ -300,60 +320,88 @@ const PluginFieldCollection* QKVToContextInterleavedPluginCreator::getFieldNames
 
 IPluginV2* QKVToContextInterleavedPluginCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
 {
-    int hiddenSize = 0;
-    int numHeads = 0;
-
-    float dqProbs = -1;
-
-    for (int i = 0; i < fc->nbFields; i++)
+    try
     {
-        std::string field_name(fc->fields[i].name);
+        int32_t hiddenSize = 0;
+        // Since numHeads must always exist or validateRequiredAttributes will fail,
+        // we can set numHeads to -1 so that static analysis tools don't warn about
+        // a division by zero in QKVToContextInterleavedPlugin constructor.
+        int32_t numHeads{-1};
 
-        if (field_name.compare("hidden_size") == 0)
+        float dqProbs = -1;
+        int32_t useInt8ScaleMax{-1};
+
+        plugin::validateRequiredAttributesExist({"hidden_size", "num_heads"}, fc);
+
+        for (int32_t i = 0; i < fc->nbFields; i++)
         {
-            hiddenSize = *static_cast<const int*>(fc->fields[i].data);
-            BERT_DEBUG_VALUE("Building hiddenSize: ", hiddenSize);
+            std::string field_name(fc->fields[i].name);
+
+            if (field_name.compare("hidden_size") == 0)
+            {
+                hiddenSize = *static_cast<int32_t const*>(fc->fields[i].data);
+                PLUGIN_VALIDATE(hiddenSize > 0, ("QKV: Invalid hiddenSize " + std::to_string(hiddenSize)).c_str());
+                BERT_DEBUG_VALUE("Building hiddenSize: ", hiddenSize);
+            }
+            if (field_name.compare("num_heads") == 0)
+            {
+                numHeads = *static_cast<int32_t const*>(fc->fields[i].data);
+                PLUGIN_VALIDATE(numHeads > 0, ("QKV: Invalid numHeads " + std::to_string(numHeads)).c_str());
+                BERT_DEBUG_VALUE("Building numHeads: ", numHeads);
+            }
+            if (field_name.compare("dq_probs") == 0)
+            {
+                dqProbs = *static_cast<float const*>(fc->fields[i].data);
+                PLUGIN_VALIDATE(dqProbs > 0.0F, ("QKV: Invalid dqProbs " + std::to_string(dqProbs)).c_str());
+                BERT_DEBUG_VALUE("Building dqProbs: ", dqProbs);
+            }
+            if (field_name.compare("use_int8_scale_max") == 0)
+            {
+                useInt8ScaleMax = *static_cast<int32_t const*>(fc->fields[i].data);
+                PLUGIN_VALIDATE(useInt8ScaleMax == 0 || useInt8ScaleMax == 1,
+                    ("QKV: Invalid useInt8ScaleMax " + std::to_string(useInt8ScaleMax)).c_str());
+                BERT_DEBUG_VALUE("Building useInt8ScaleMax: ", useInt8ScaleMax);
+            }
         }
-        if (field_name.compare("num_heads") == 0)
+
+        if (dqProbs < 0)
         {
-            numHeads = *static_cast<const int*>(fc->fields[i].data);
-            BERT_DEBUG_VALUE("Building numHeads: ", numHeads);
+            gLogInfo << "Using default scale factor\n";
+            dqProbs = 1.F / 127.F;
         }
-        if (field_name.compare("dq_probs") == 0)
+
+        if (useInt8ScaleMax < 0)
         {
-            dqProbs = *static_cast<const float*>(fc->fields[i].data);
-            BERT_DEBUG_VALUE("Building dqProbs: ", dqProbs);
+            gLogInfo << "Using default for use_int8_scale_max: true" << std::endl;
+            useInt8ScaleMax = 1;
         }
-    }
 
-    if (hiddenSize <= 0)
+        auto const useInt8ScaleMaxFlag = static_cast<bool>(useInt8ScaleMax);
+
+        QKVToContextInterleavedPlugin* p = new QKVToContextInterleavedPlugin(name, hiddenSize, numHeads, dqProbs, useInt8ScaleMaxFlag);
+        return p;
+    }
+    catch (std::exception const& e)
     {
-        gLogError << "QKV: Invalid hiddenSize " << hiddenSize << std::endl;
-        return nullptr;
+        caughtError(e);
     }
-
-    if (numHeads <= 0)
-    {
-        gLogError << "QKV: Invalid numHeads " << numHeads << std::endl;
-        return nullptr;
-    }
-
-    if (dqProbs < 0)
-    {
-        gLogInfo << "Using default scale factor\n";
-        dqProbs = 1.F / 127.F;
-    }
-
-    QKVToContextInterleavedPlugin* p = new QKVToContextInterleavedPlugin(name, hiddenSize, numHeads, dqProbs);
-    return p;
+    return nullptr;
 }
 
 IPluginV2* QKVToContextInterleavedPluginCreator::deserializePlugin(
     const char* name, const void* serialData, size_t serialLength)  noexcept
 {
-    // This object will be deleted when the network is destroyed, which will
-    // call QKVToContextInterleavedPlugin::destroy() noexcept
-    return new QKVToContextInterleavedPlugin(name, serialData, serialLength);
+    try
+    {
+        // This object will be deleted when the network is destroyed, which will
+        // call QKVToContextInterleavedPlugin::destroy() noexcept
+        return new QKVToContextInterleavedPlugin(name, serialData, serialLength);
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 void QKVToContextInterleavedPluginCreator::setPluginNamespace(const char* libNamespace) noexcept

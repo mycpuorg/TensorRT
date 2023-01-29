@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,7 +18,7 @@ from collections import OrderedDict
 
 from polygraphy import util
 from polygraphy.comparator import RunResults
-from polygraphy.json import load_json
+from polygraphy.json import load_json, save_json
 from polygraphy.logger import G_LOGGER
 from polygraphy.tools.base import Tool
 
@@ -33,11 +34,15 @@ class ToInput(Tool):
 
     def add_parser_args(self, parser):
         parser.add_argument(
-            "paths", help="Path(s) to file(s) containing input or output data from Polygraphy", nargs="+"
+            "paths",
+            help="Path(s) to file(s) containing input or output data from Polygraphy. "
+            "Note: Output data must be generated using exactly one runner. "
+            "Otherwise, the outputs from one runner may be overwritten by those of a subsequent runner. ",
+            nargs="+",
         )
         parser.add_argument("-o", "--output", help="Path to the file to generate", required=True)
 
-    def run(self, args):
+    def run_impl(self, args):
         inputs = []
 
         def update_inputs(new_inputs, path):
@@ -45,9 +50,9 @@ class ToInput(Tool):
 
             if inputs and len(inputs) != len(new_inputs):
                 G_LOGGER.warning(
-                    "The provided files have different numbers of iterations.\n"
-                    "Note: Inputs currently contains {:} iterations, but the data in {:} contains {:} iterations. "
-                    "Some iterations will contain incomplete data".format(len(inputs), path, len(new_inputs))
+                    f"The provided files have different numbers of iterations.\n"
+                    f"Note: Inputs currently contains {len(inputs)} iterations, but the data in {path} contains "
+                    f"{len(new_inputs)} iterations. Some iterations will contain incomplete data. "
                 )
 
             # Pad to appropriate length
@@ -58,7 +63,7 @@ class ToInput(Tool):
 
         for path in args.paths:
             # Note: It's important we have encode/decode JSON methods registered
-            # for the types we care about, e.g. RunResults. Importing the class should generally guarantee this.
+            # for the types we care about, e.g. RunResults. Importing the class should guarantee this.
             data = load_json(path)
             if isinstance(data, RunResults):
                 for _, iters in data.items():
@@ -68,4 +73,4 @@ class ToInput(Tool):
                     data = [data]
                 update_inputs(data, path)
 
-        util.save_json(inputs, args.output, description="input file containing {:} iteration(s)".format(len(inputs)))
+        save_json(inputs, args.output, description=f"input file containing {len(inputs)} iteration(s)")

@@ -1,5 +1,227 @@
 # TensorRT OSS Release Changelog
 
+## [22.12](https://github.com/NVIDIA/TensorRT/releases/tag/22.12) - 2022-12-06
+
+### Added
+- Stable Diffusion demo using TensorRT Plugins
+- KV-cache and beam search to GPT2 and T5 demos
+- Perplexity calculation to all HF demos
+
+### Changed
+- Updated trex to v0.1.5
+- Increased default workspace size in demoBERT to build BS=128 fp32 engines
+- Use `avg_iter=8` and timing cache to make demoBERT perf more stable
+
+### Removed
+- None
+
+## [8.5.1 GA](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/tensorrt-8.html#rel-8-5-1) - 2022-11-01
+
+TensorRT OSS release corresponding to TensorRT 8.5.1.7 GA release.
+- Updates since [TensorRT 8.4.1 GA release](https://github.com/NVIDIA/TensorRT/releases/tag/8.4.1).
+- Please refer to the [TensorRT 8.5.1 GA release notes](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/tensorrt-8.html#rel-8-5-1) for more information.
+
+Key Features and Updates:
+
+- Samples enhancements
+  - Added [sampleNamedDimensions](samples/sampleNamedDimensions) which works with named dimensions.
+  - Updated `sampleINT8API` and `introductory_parser_samples` to use `ONNX` models over `Caffe`/`UFF`
+  - Removed UFF/Caffe samples including `sampleMNIST`, `end_to_end_tensorflow_mnist`, `sampleINT8`, `sampleMNISTAPI`, `sampleUffMNIST`, `sampleUffPluginV2Ext`, `engine_refit_mnist`, `int8_caffe_mnist`, `uff_custom_plugin`, `sampleFasterRCNN`, `sampleUffFasterRCNN`, `sampleGoogleNet`, `sampleSSD`, `sampleUffSSD`, `sampleUffMaskRCNN` and `uff_ssd`.
+
+- Plugin enhancements
+  - Added [GridAnchorRectPlugin](plugin/gridAnchorPlugin) to support rectangular feature maps in gridAnchorPlugin.
+  - Added [ROIAlignPlugin](plugin/roiAlignPlugin) to support the ONNX operator [RoiAlign](https://github.com/onnx/onnx/blob/main/docs/Operators.md#RoiAlign). The ONNX parser will automatically route ROIAlign ops through the plugin.
+  - Added Hopper support for the [BERTQKVToContextPlugin](plugin/bertQKVToContextPlugin) plugin.
+  - Exposed the **use_int8_scale_max** attribute in the [BERTQKVToContextPlugin](plugin/bertQKVToContextPlugin) plugin to allow users to disable the by-default usage of INT8 scale factors to optimize softmax MAX reduction in versions 2 and 3 of the plugin.
+
+- ONNX-TensorRT changes
+  - Added support for operator [Reciprocal](https://github.com/onnx/onnx/blob/main/docs/Operators.md#Reciprocal).
+
+- Build containers
+  - Updated default cuda versions to `11.8.0`.
+
+- Tooling enhancements
+  - Updated [onnx-graphsurgeon](tools/onnx-graphsurgeon) to v0.3.25.
+  - Updated [Polygraphy](tools/Polygraphy) to v0.43.1.
+  - Updated [polygraphy-extension-trtexec](tool/polygraphy-extension-trtexec) to v0.0.8.
+  - Updated [Tensorflow Quantization Toolkit](tools/tensorflow-quantization) to v0.2.0.
+
+## [22.08](https://github.com/NVIDIA/TensorRT/releases/tag/22.08) - 2022-08-16
+
+Updated TensorRT version to 8.4.2 - see the [TensorRT 8.4.2 release notes](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/tensorrt-8.html#rel-8-4-2) for more information
+
+### Changed
+- Updated default protobuf version to 3.20.x
+- Updated ONNX-TensorRT submodule version to `22.08` tag
+- Updated `sampleIOFormats` and `sampleAlgorithmSelector` to use `ONNX` models over `Caffe`
+
+### Fixes
+- Fixed missing serialization member in custom `ClipPlugin` plugin used in `uff_custom_plugin` sample
+- Fixed various Python import issues
+
+### Added
+- Added new DeBERTA demo
+- Added version 2 for `disentangledAttentionPlugin` to support DeBERTA v2
+
+### Removed
+- None
+
+## [22.07](https://github.com/NVIDIA/TensorRT/releases/tag/22.07) - 2022-07-21
+### Added
+- `polygraphy-trtexec-plugin` tool for Polygraphy
+- Multi-profile support for demoBERT
+- KV cache support for HF BART demo
+
+### Changed
+- Updated ONNX-GS to `v0.3.20`
+
+### Removed
+- None
+
+## [8.4.1 GA](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/tensorrt-8.html#rel-8-4-1) - 2022-06-14
+
+TensorRT OSS release corresponding to TensorRT 8.4.1.5 GA release.
+- Updates since [TensorRT 8.2.1 GA release](https://github.com/NVIDIA/TensorRT/releases/tag/8.2.1).
+- Please refer to the [TensorRT 8.4.1 GA release notes](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/tensorrt-8.html#rel-8-4-1) for more information.
+
+Key Features and Updates:
+
+- Samples enhancements
+  - Added [Detectron2 Mask R-CNN R50-FPN](samples/python/detectron2/README.md) python sample
+  - Added a [quickstart guide](quickstart/deploy_to_triton) for NVidia Triton deployment workflow.
+  - Added onnx export script for [sampleOnnxMnistCoordConvAC](samples/sampleOnnxMnistCoordConvAC)
+  - Removed `sampleNMT`.
+  - Removed usage of deprecated TensorRT APIs in samples.
+
+- EfficientDet sample
+  - Added support for EfficientDet Lite and AdvProp models.
+  - Added dynamic batch support.
+  - Added mixed precision engine builder.
+
+- HuggingFace transformer demo
+  - Added BART model.
+  - Performance speedup of GPT-2 greedy search using GPU implementation.
+  - Fixed GPT2 onnx export failure due to 2G file size limitation.
+  - Extended Megatron LayerNorm plugins to support larger hidden sizes.
+  - Added performance benchmarking mode.
+  - Enable tf32 format by default.
+
+- `demoBERT` enhancements
+  - Add `--duration` flag to perf benchmarking script.
+  - Fixed import of `nvinfer_plugins` library in demoBERT on Windows.
+
+- Torch-QAT toolkit
+  - `quant_bert.py` module removed. It is now upstreamed to [HuggingFace QDQBERT](https://huggingface.co/docs/transformers/model_doc/qdqbert).
+  - Use axis0 as default for deconv.
+  - [#1939](https://github.com/NVIDIA/TensorRT/issues/1939) - Fixed path in `classification_flow` example.
+
+- Plugin enhancements
+  - Added [Disentangled attention plugin](plugin/disentangledAttentionPlugin), `DisentangledAttention_TRT`, to support DeBERTa model.
+  - Added [Multiscale deformable attention plugin](plugin/multiscaleDeformableAttnPlugin), `MultiscaleDeformableAttnPlugin_TRT`, to support DDETR model.
+  - Added new plugins: [decodeBbox3DPlugin](plugin/decodeBbox3DPlugin), [pillarScatterPlugin](plugin/pillarScatterPlugin), and [voxelGeneratorPlugin](plugin/voxelGeneratorPlugin).
+  - Refactored [EfficientNMS plugin](plugin/efficientNMSPlugin) to support [TF-TRT](https://github.com/tensorflow/tensorrt) and implicit batch mode.
+  - `fp16` support for `pillarScatterPlugin`.
+
+- Build containers
+  - Updated default cuda versions to `11.6.2`.
+  - [CentOS Linux 8 has reached End-of-Life](https://www.centos.org/centos-linux-eol/) on Dec 31, 2021. The corresponding container has been removed from TensorRT-OSS.
+  - Install `devtoolset-8` for updated g++ versions in CentOS7 container.
+
+- Tooling enhancements
+  - Added [Tensorflow Quantization Toolkit](tools/tensorflow-quantization) v0.1.0 for Quantization-Aware-Training of Tensorflow 2.x Keras models.
+  - Added [TensorRT Engine Explorer](tools/experimental/trt-engine-explorer/README.md) v0.1.2 for inspecting TensorRT engine plans and associated inference profiling data.
+  - Updated [Polygraphy](tools/Polygraphy) to v0.38.0.
+  - Updated [onnx-graphsurgeon](tools/onnx-graphsurgeon) to v0.3.19.
+
+- `trtexec` enhancements
+  - Added `--layerPrecisions` and `--layerOutputTypes` flags for specifying layer-wise precision and output type constraints.
+  - Added `--memPoolSize` flag to specify the size of workspace as well as the DLA memory pools via a unified interface. Correspondingly the `--workspace` flag has been deprecated.
+  - "End-To-End Host Latency" metric has been removed. Use the “Host Latency” metric instead. For more information, refer to [Benchmarking Network](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#trtexec-benchmark) section in the TensorRT Developer Guide.
+  - Use `enqueueV2()` instead of `enqueue()` when engine has explicit batch dimensions.
+
+
+## [22.06](https://github.com/NVIDIA/TensorRT/releases/tag/22.06) - 2022-06-08
+### Added
+- None
+
+### Changed
+- Disentangled attention (DMHA) plugin refactored
+- ONNX parser updated to 8.2GA
+
+### Removed
+- None
+
+## [22.05](https://github.com/NVIDIA/TensorRT/releases/tag/22.05) - 2022-05-13
+### Added
+- Disentangled attention plugin for DeBERTa
+- DMHA (multiscaleDeformableAttnPlugin) plugin for DDETR
+- Performance benchmarking mode to HuggingFace demo
+
+### Changed
+- Updated base TensorRT version to 8.2.5.1
+- Updated onnx-graphsurgeon v0.3.19 [CHANGELOG](tools/onnx-graphsurgeon/CHANGELOG.md)
+- fp16 support for pillarScatterPlugin
+- [#1939](https://github.com/NVIDIA/TensorRT/issues/i1939) - Fixed path in quantization `classification_flow`
+- Fixed GPT2 onnx export failure due to 2G limitation
+- Use axis0 as default for deconv in pytorch-quantization toolkit
+- Updated onnx export script for CoordConvAC sample
+- Install devtoolset-8 for updated g++ version in CentOS7 container
+
+### Removed
+- Usage of deprecated TensorRT APIs in samples removed
+- `quant_bert.py` module removed from pytorch-quantization
+
+## [22.04](https://github.com/NVIDIA/TensorRT/releases/tag/22.04) - 2022-04-13
+### Added
+- TensorRT Engine Explorer v0.1.0 [README](tools/experimental/trt-engine-explorer/README.md)
+- Detectron 2 Mask R-CNN R50-FPN python [sample](samples/python/detectron2/README.md)
+- Model export script for sampleOnnxMnistCoordConvAC
+
+### Changed
+- Updated base TensorRT version to 8.2.4.2
+- Updated copyright headers with SPDX identifiers
+- Updated onnx-graphsurgeon v0.3.17 [CHANGELOG](tools/onnx-graphsurgeon/CHANGELOG.md)
+- `PyramidROIAlign` plugin refactor and bug fixes
+- Fixed `MultilevelCropAndResize` crashes on Windows
+- [#1583](https://github.com/NVIDIA/TensorRT/issues/1583) - sublicense ieee/half.h under Apache2
+- Updated demo/BERT performance tables for rel-8.2
+- [#1774](https://github.com/NVIDIA/TensorRT/issues/1774) Fix python hangs at IndexErrors when TF is imported after TensorRT
+- Various bugfixes in demos - BERT, Tacotron2 and HuggingFace GPT/T5 notebooks
+- Cleaned up sample READMEs
+
+### Removed
+- sampleNMT removed from samples
+
+## [22.03](https://github.com/NVIDIA/TensorRT/releases/tag/22.03) - 2022-03-23
+### Added
+- EfficientDet sample enhancements
+  - Added support for EfficientDet Lite and AdvProp models.
+  - Added dynamic batch support.
+  - Added mixed precision engine builder.
+
+### Changed
+- Better decoupling of HuggingFace demo tests
+
+## [22.02](https://github.com/NVIDIA/TensorRT/releases/tag/22.02) - 2022-02-04
+### Added
+- New plugins: [decodeBbox3DPlugin](plugin/decodeBbox3DPlugin), [pillarScatterPlugin](plugin/pillarScatterPlugin), and [voxelGeneratorPlugin](plugin/voxelGeneratorPlugin)
+
+### Changed
+- Extend Megatron LayerNorm plugins to support larger hidden sizes
+- Refactored EfficientNMS plugin for TFTRT and added implicit batch mode support
+- Update base TensorRT version to 8.2.3.0
+- GPT-2 greedy search speedup - now runs on GPU
+- Updates to TensorRT developer tools
+  - Polygraphy [v0.35.1](tools/Polygraphy/CHANGELOG.md#v0351-2022-01-14)
+  - onnx-graphsurgeon [v0.3.15](tools/onnx-graphsurgeon/CHANGELOG.md#v0315-2022-01-18)
+- Updated ONNX parser to v8.2.3.0
+- Minor updates and bugfixes
+  - Samples: TFOD, GPT-2, demo/BERT
+  - Plugins: proposalPlugin, geluPlugin, bertQKVToContextPlugin, batchedNMS
+
+### Removed
+- Unused source file(s) in demo/BERT
+
 ## [8.2.1 GA](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/tensorrt-8.html#rel-8-2-1) - 2021-11-24
 
 TensorRT OSS release corresponding to TensorRT 8.2.1.8 GA release.

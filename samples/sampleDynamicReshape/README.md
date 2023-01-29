@@ -64,7 +64,7 @@ parser->parseFromFile(locateFile(mParams.onnxFileName, mParams.dataDirs).c_str()
 
 When building the preprocessor engine, also provide an optimization profile so that TensorRT knows which input shapes to optimize for:
 ```
-auto preprocessorConfig = makeUnique(builder->createNetworkConfig());
+auto preprocessorConfig = makeUnique(builder->createBuilderConfig());
 auto profile = builder->createOptimizationProfile();
 ```
 
@@ -91,8 +91,8 @@ Prepare and set int8 calibrator if running in int8 mode:
 std::unique_ptr<IInt8Calibrator> calibrator;
 if (mParams.int8)
 {
-    preprocessorConfig->setFlag(BuilderFlag::kINT8);    
-    const int nCalibBatches{10}; 
+    preprocessorConfig->setFlag(BuilderFlag::kINT8);
+    const int nCalibBatches{10};
     MNISTBatchStream calibrationStream(calibBatchSize, nCalibBatches, "train-images-idx3-ubyte",
         "train-labels-idx1-ubyte", mParams.dataDirs);
     calibrator.reset(new Int8EntropyCalibrator2<MNISTBatchStream>(
@@ -101,9 +101,23 @@ if (mParams.int8)
 }
 ```
 
-Run engine build with config: 
+Run engine build with config:
 ```
-mPreprocessorEngine = makeUnique(builder->buildEngineWithConfig(*preprocessorNetwork, *preprocessorConfig));
+SampleUniquePtr<nvinfer1::IHostMemory> preprocessorPlan = makeUnique(
+        builder->buildSerializedNetwork(*preprocessorNetwork, *preprocessorConfig));
+if (!preprocessorPlan)
+{
+    sample::gLogError << "Preprocessor serialized engine build failed." << std::endl;
+    return false;
+}
+
+mPreprocessorEngine = makeUnique(
+    runtime->deserializeCudaEngine(preprocessorPlan->data(), preprocessorPlan->size()));
+if (!mPreprocessorEngine)
+{
+    sample::gLogError << "Preprocessor engine deserialization failed." << std::endl;
+    return false;
+}
 ```
 
 For the MNIST model, attach a Softmax layer to the end of the network, set softmax axis to 1 since network output has shape [1, 10] in full dims mode and replace the existing network output with the Softmax:
@@ -117,7 +131,22 @@ network->markOutput(*softmax->getOutput(0));
 A calibrator and a calibration profile are set the same way as above for the preprocessor engine config. `calibBatchSize` is set to 1 for the prediction engine as ONNX model has an explicit batch.
 
 Finally, build as normal:
-`mPredictionEngine = makeUnique(builder->buildEngineWithConfig(*network, *config));`
+```
+SampleUniquePtr<nvinfer1::IHostMemory> predictionPlan = makeUnique(builder->buildSerializedNetwork(*network, *config));
+if (!predictionPlan)
+{
+    sample::gLogError << "Prediction serialized engine build failed." << std::endl;
+    return false;
+}
+
+mPredictionEngine = makeUnique(
+    runtime->deserializeCudaEngine(predictionPlan->data(), predictionPlan->size()));
+if (!mPredictionEngine)
+{
+    sample::gLogError << "Prediction engine deserialization failed." << std::endl;
+    return false;
+}
+```
 
 ### Running inference
 
@@ -160,7 +189,6 @@ The IResizeLayer implements the resize operation on an input tensor.
     export TRT_DATADIR=/usr/src/tensorrt/data
     pushd $TRT_DATADIR/mnist
     pip3 install Pillow
-    python3 download_pgms.py
     popd
     ```
 
@@ -189,7 +217,7 @@ The IResizeLayer implements the resize operation on an input tensor.
     Producer version: 2.5.1
     Domain:           ai.cntk
     Model version:    1
-    Doc string:  
+    Doc string:
     ----------------------------------------------------------------
     [W] [TRT] onnx2trt_utils.cpp:214: Your ONNX model has been generated with INT64 weights, while TensorRT does not natively support INT64. Attempting to cast down to INT32.
     [W] [TRT] onnx2trt_utils.cpp:214: Your ONNX model has been generated with INT64 weights, while TensorRT does not natively support INT64. Attempting to cast down to INT32.
@@ -230,16 +258,16 @@ The IResizeLayer implements the resize operation on an input tensor.
     @@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
     [I] Output:
-    [I]  Prob 0  0.0000 Class 0: 
-    [I]  Prob 1  0.0000 Class 1: 
+    [I]  Prob 0  0.0000 Class 0:
+    [I]  Prob 1  0.0000 Class 1:
     [I]  Prob 2  1.0000 Class 2: **********
-    [I]  Prob 3  0.0000 Class 3: 
-    [I]  Prob 4  0.0000 Class 4: 
-    [I]  Prob 5  0.0000 Class 5: 
-    [I]  Prob 6  0.0000 Class 6: 
-    [I]  Prob 7  0.0000 Class 7: 
-    [I]  Prob 8  0.0000 Class 8: 
-    [I]  Prob 9  0.0000 Class 9: 
+    [I]  Prob 3  0.0000 Class 3:
+    [I]  Prob 4  0.0000 Class 4:
+    [I]  Prob 5  0.0000 Class 5:
+    [I]  Prob 6  0.0000 Class 6:
+    [I]  Prob 7  0.0000 Class 7:
+    [I]  Prob 8  0.0000 Class 8:
+    [I]  Prob 9  0.0000 Class 9:
     &&&& PASSED TensorRT.sample_dynamic_reshape # ./sample_dynamic_reshape
     ```
 

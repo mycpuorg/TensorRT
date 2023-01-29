@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,9 +16,9 @@
  */
 #ifndef TRT_NORMALIZE_PLUGIN_H
 #define TRT_NORMALIZE_PLUGIN_H
+#include "common/kernel.h"
+#include "common/plugin.h"
 #include "cudnn.h"
-#include "kernel.h"
-#include "plugin.h"
 #include <cublas_v2.h>
 #include <string>
 #include <vector>
@@ -30,10 +31,10 @@ namespace plugin
 class Normalize : public IPluginV2Ext
 {
 public:
-    Normalize(const Weights* weights, int nbWeights, bool acrossSpatial, bool channelShared, float eps);
+    Normalize(Weights const* weights, int nbWeights, bool acrossSpatial, bool channelShared, float eps);
 
     Normalize(
-        const Weights* weights, int nbWeights, bool acrossSpatial, bool channelShared, float eps, int C, int H, int W);
+        Weights const* weights, int nbWeights, float scalarScale, bool acrossSpatial, bool channelShared, float eps, int C, int H, int W);
 
     Normalize(const void* buffer, size_t length);
 
@@ -92,8 +93,9 @@ private:
 
     cublasHandle_t mCublas;
 
-    Weights mWeights{};
+    Weights mWeights{}; // mWeights.values is on the device
     int mNbWeights{};
+    float mScalarScale{}; // keep track of scale on the host (for when channelShared is true)
     bool acrossSpatial{};
     bool channelShared{};
     float eps{};
@@ -103,7 +105,7 @@ private:
     std::string mPluginNamespace;
 };
 
-class NormalizePluginCreator : public BaseCreator
+class NormalizePluginCreator : public nvinfer1::pluginInternal::BaseCreator
 {
 public:
     NormalizePluginCreator();

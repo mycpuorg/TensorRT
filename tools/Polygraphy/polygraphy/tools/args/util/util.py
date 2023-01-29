@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -63,7 +64,7 @@ def run_script(script_func, *args):
                 the name of an object defined within the script to retrieve.
         args:
                 Additional positional argruments to pass to script_func.
-                The script_func should accept these by variable name instead
+                The script_func must accept these by variable name instead
                 of taking the values themselves. Values of ``None`` will be
                 passed directly instead of by variable name.
 
@@ -148,48 +149,114 @@ def np_type_from_str(dt_str):
         return {np.dtype(dtype).name: np.dtype(dtype) for dtype in np.sctypeDict.values()}[dt_str]
     except KeyError:
         G_LOGGER.error(
-            "Could not understand data type: {:}. Did you forget to specify a data type? "
-            "Please use one of: {:} or `auto`.".format(dt_str, np_types())
+            f"Could not understand data type: {dt_str}. Did you forget to specify a data type? Please use one of: {np_types()} or `auto`."
         )
         raise
 
 
 @mod.export()
-def parse_dict_with_default(arg_lst, cast_to=None, sep=None):
+def parse_tuple_list_with_default(arg_lst, cast_to=None, sep=None, allow_empty_key=None, treat_missing_sep_as_val=None):
     """
-    Generate a dictionary from a list of arguments of the form:
-    ``<key>:<val>``. If ``<key>`` is empty, the value will be assigned
-    to an empty string key in the returned mapping.
+    Generate a list of (key, value) pairs from a list of arguments of the form:
+    ``<key><sep><val>``.
+
+    If the argument is missing a separator,
+
+    - If `treat_missing_sep_as_val` is True, then the argument is treated as a
+      value with empty key, i.e. it is parsed as ``<sep><val>``.
+    - If `treat_missing_sep_as_val` is False, then the argument is treated as a
+      key with empty value, i.e. it is parsed as ``<key><sep>``.
+
+    If `allow_empty_key` is False, then this function will log a critical error if
+    any empty keys are detected.
 
     Args:
         arg_lst (List[str]):
                 The arguments to map.
 
-        cast_to (type):
-                The type to cast the values in the map. By default,
-                uses the type returned by ``cast``.
+        cast_to (Callable):
+                A callable to cast types before adding them to the map.
+                Defaults to `cast()`.
         sep (str):
                 The separator between the key and value strings.
+                Defaults to ":".
+        allow_empty_key (bool):
+                Whether empty keys should be allowed.
+                Defaults to True.
+        treat_missing_sep_as_val (bool):
+                Whether the argument should be treated as a value with empty key
+                when separator is missing (see above).  Defaults to True.
     Returns:
-        Dict[str, obj]: The mapping.
+        Optional[List[Tuple[str, obj]]]:
+            The parsed list, or None if arg_lst is None (indicating the flag
+            was not specified).
     """
     sep = util.default(sep, ":")
+    cast_to = util.default(cast_to, cast)
+    allow_empty_key = util.default(allow_empty_key, True)
+    treat_missing_sep_as_val = util.default(treat_missing_sep_as_val, True)
 
     if arg_lst is None:
-        return
+        return None
 
-    arg_map = {}
+    ret = []
     for arg in arg_lst:
-        key, _, val = arg.rpartition(sep)
-        val = cast(val)
-        if cast_to:
-            val = cast_to(val)
-        arg_map[key] = val
-    return arg_map
+        key, parsed_sep, val = arg.rpartition(sep)
 
+        if parsed_sep == '' and not treat_missing_sep_as_val:
+            key, val = val, key
+
+        if not key and not allow_empty_key:
+            G_LOGGER.critical(
+                f"Could not parse argument: {arg}. Expected an argument in the format: `key{sep}value`.\n"
+            )
+        ret.append((key, cast_to(val)))
+    return ret
+
+@mod.export()
+def parse_dict_with_default(arg_lst, cast_to=None, sep=None, allow_empty_key=None, treat_missing_sep_as_val=None):
+    """
+    Generate a dict from a list of arguments of the form:
+    ``<key><sep><val>``.
+
+    If the argument is missing a separator,
+
+    - If `treat_missing_sep_as_val` is True, then the argument is treated as a
+      value with empty key, i.e. it is parsed as ``<sep><val>``.
+    - If `treat_missing_sep_as_val` is False, then the argument is treated as a
+      key with empty value, i.e. it is parsed as ``<key><sep>``.
+
+    If `allow_empty_key` is False, then this function will log a critical error if
+    any empty keys are detected.
+
+    Args:
+        arg_lst (List[str]):
+                The arguments to map.
+
+        cast_to (Callable):
+                A callable to cast types before adding them to the map.
+                Defaults to `cast()`.
+        sep (str):
+                The separator between the key and value strings.
+                Defaults to ":".
+        allow_empty_key (bool):
+                Whether empty keys should be allowed.
+                Defaults to True.
+        treat_missing_sep_as_val (bool):
+                Whether the argument should be treated as a value with empty key
+                when separator is missing (see above).  Defaults to True.
+    Returns:
+        Optional[Dict[str, obj]]:
+            The parsed key-value map, or None if arg_lst is None (indicating the flag
+            was not specified).
+    """
+    tuple_list = parse_tuple_list_with_default(arg_lst, cast_to, sep, allow_empty_key, treat_missing_sep_as_val)
+    if tuple_list is None:
+        return None
+    return dict(tuple_list)
 
 @mod.deprecate(
-    remove_in="0.35.0",
+    remove_in="0.45.0",
     use_instead=": as a separator and write shapes in the form [dim0,...,dimN]",
     name="Using , as a separator",
 )
@@ -217,8 +284,7 @@ def parse_meta_legacy(meta_args, includes_shape=True, includes_dtype=True):
             tensor_meta_arg, _, val = tensor_meta_arg.rpartition(SEP)
             if not tensor_meta_arg:
                 G_LOGGER.critical(
-                    "Could not parse {:} from argument: {:}. Is it separated by a comma "
-                    "(,) from the tensor name?".format(name, orig_tensor_meta_arg)
+                    f"Could not parse {name} from argument: {orig_tensor_meta_arg}. Is it separated by a comma (,) from the tensor name?"
                 )
             if val.lower() == "auto":
                 val = None
@@ -289,11 +355,11 @@ def parse_meta_legacy(meta_args, includes_shape=True, includes_dtype=True):
         new_style.append(arg)
 
     G_LOGGER.warning(
-        "The old shape syntax is deprecated and will be removed in a future version of Polygraphy\n"
-        "See the CHANGELOG for the motivation behind this deprecation.",
+        "The old shape syntax is deprecated and will be removed in Polygraphy 0.45.0\n"
+        "See the CHANGELOG entry for v0.32.0 for the motivation behind this deprecation.",
         mode=LogMode.ONCE,
     )
-    G_LOGGER.warning("Instead of: '{:}', use: '{:}'\n".format(" ".join(meta_args), " ".join(new_style)))
+    G_LOGGER.warning(f"Instead of: '{' '.join(meta_args)}', use: '{' '.join(new_style)}'\n")
     return meta
 
 
@@ -374,7 +440,7 @@ def parse_num_bytes(num_bytes_arg):
         return int(float(num_component) * multiplier)
     except:
         G_LOGGER.critical(
-            "Could not convert {:} to a number of bytes. "
+            f"Could not convert {num_bytes_arg} to a number of bytes. "
             "Please use either an integer (e.g. 16000000), scientific notation (e.g. 16e6), "
-            "or a number with a valid suffix: K, M, or G (e.g. 16M).".format(num_bytes_arg)
+            "or a number with a valid suffix: K, M, or G (e.g. 16M)."
         )

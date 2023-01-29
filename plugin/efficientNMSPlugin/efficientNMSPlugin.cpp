@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,7 +23,6 @@ using nvinfer1::plugin::EfficientNMSPlugin;
 using nvinfer1::plugin::EfficientNMSParameters;
 using nvinfer1::plugin::EfficientNMSPluginCreator;
 using nvinfer1::plugin::EfficientNMSONNXPluginCreator;
-using nvinfer1::plugin::EfficientNMSTFTRTPluginCreator;
 
 namespace
 {
@@ -30,8 +30,6 @@ const char* EFFICIENT_NMS_PLUGIN_VERSION{"1"};
 const char* EFFICIENT_NMS_PLUGIN_NAME{"EfficientNMS_TRT"};
 const char* EFFICIENT_NMS_ONNX_PLUGIN_VERSION{"1"};
 const char* EFFICIENT_NMS_ONNX_PLUGIN_NAME{"EfficientNMS_ONNX_TRT"};
-const char* EFFICIENT_NMS_TFTRT_PLUGIN_VERSION{"1"};
-const char* EFFICIENT_NMS_TFTRT_PLUGIN_NAME{"EfficientNMS_TFTRT_TRT"};
 } // namespace
 
 EfficientNMSPlugin::EfficientNMSPlugin(EfficientNMSParameters param)
@@ -43,7 +41,7 @@ EfficientNMSPlugin::EfficientNMSPlugin(const void* data, size_t length)
 {
     const char *d = reinterpret_cast<const char*>(data), *a = d;
     mParam = read<EfficientNMSParameters>(d);
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 }
 
 const char* EfficientNMSPlugin::getPluginType() const noexcept
@@ -72,6 +70,24 @@ int EfficientNMSPlugin::getNbOutputs() const noexcept
 
 int EfficientNMSPlugin::initialize() noexcept
 {
+    if (!initialized)
+    {
+        int32_t device;
+        CSC(cudaGetDevice(&device), STATUS_FAILURE);
+        struct cudaDeviceProp properties;
+        CSC(cudaGetDeviceProperties(&properties, device), STATUS_FAILURE);
+        if (properties.regsPerBlock >= 65536)
+        {
+            // Most Devices
+            mParam.numSelectedBoxes = 5000;
+        }
+        else
+        {
+            // Jetson TX1/TX2
+            mParam.numSelectedBoxes = 2000;
+        }
+        initialized = true;
+    }
     return STATUS_SUCCESS;
 }
 
@@ -86,7 +102,7 @@ void EfficientNMSPlugin::serialize(void* buffer) const noexcept
 {
     char *d = reinterpret_cast<char*>(buffer), *a = d;
     write(d, mParam);
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 void EfficientNMSPlugin::destroy() noexcept
@@ -170,7 +186,7 @@ DimsExprs EfficientNMSPlugin::getOutputDimensions(
         if (mParam.outputONNXIndices)
         {
             // ONNX NMS
-            ASSERT(outputIndex == 0);
+            PLUGIN_ASSERT(outputIndex == 0);
 
             // detection_indices
             out_dim.nbDims = 2;
@@ -181,7 +197,7 @@ DimsExprs EfficientNMSPlugin::getOutputDimensions(
         else
         {
             // Standard NMS
-            ASSERT(outputIndex >= 0 && outputIndex <= 3);
+            PLUGIN_ASSERT(outputIndex >= 0 && outputIndex <= 3);
 
             // num_detections
             if (outputIndex == 0)
@@ -233,8 +249,8 @@ bool EfficientNMSPlugin::supportsFormatCombination(
 
     if (mParam.outputONNXIndices)
     {
-        ASSERT(nbInputs == 2);
-        ASSERT(nbOutputs == 1);
+        PLUGIN_ASSERT(nbInputs == 2);
+        PLUGIN_ASSERT(nbOutputs == 1);
 
         // detection_indices output: int
         if (pos == 2)
@@ -248,15 +264,15 @@ bool EfficientNMSPlugin::supportsFormatCombination(
     }
     else
     {
-        ASSERT(nbInputs == 2 || nbInputs == 3);
-        ASSERT(nbOutputs == 4);
+        PLUGIN_ASSERT(nbInputs == 2 || nbInputs == 3);
+        PLUGIN_ASSERT(nbOutputs == 4);
         if (nbInputs == 2)
         {
-            ASSERT(0 <= pos && pos <= 5);
+            PLUGIN_ASSERT(0 <= pos && pos <= 5);
         }
         if (nbInputs == 3)
         {
-            ASSERT(0 <= pos && pos <= 6);
+            PLUGIN_ASSERT(0 <= pos && pos <= 6);
         }
 
         // num_detections and detection_classes output: int
@@ -281,22 +297,22 @@ void EfficientNMSPlugin::configurePlugin(
         {
             // Accepts two inputs
             // [0] boxes, [1] scores
-            ASSERT(nbInputs == 2);
-            ASSERT(nbOutputs == 1);
+            PLUGIN_ASSERT(nbInputs == 2);
+            PLUGIN_ASSERT(nbOutputs == 1);
         }
         else
         {
             // Accepts two or three inputs
             // If two inputs: [0] boxes, [1] scores
             // If three inputs: [0] boxes, [1] scores, [2] anchors
-            ASSERT(nbInputs == 2 || nbInputs == 3);
-            ASSERT(nbOutputs == 4);
+            PLUGIN_ASSERT(nbInputs == 2 || nbInputs == 3);
+            PLUGIN_ASSERT(nbOutputs == 4);
         }
         mParam.datatype = in[0].desc.type;
 
         // Shape of scores input should be
         // [batch_size, num_boxes, num_classes] or [batch_size, num_boxes, num_classes, 1]
-        ASSERT(in[1].desc.dims.nbDims == 3 || (in[1].desc.dims.nbDims == 4 && in[1].desc.dims.d[3] == 1));
+        PLUGIN_ASSERT(in[1].desc.dims.nbDims == 3 || (in[1].desc.dims.nbDims == 4 && in[1].desc.dims.d[3] == 1));
         mParam.numScoreElements = in[1].desc.dims.d[1] * in[1].desc.dims.d[2];
         mParam.numClasses = in[1].desc.dims.d[2];
 
@@ -313,18 +329,18 @@ void EfficientNMSPlugin::configurePlugin(
 
         // Shape of boxes input should be
         // [batch_size, num_boxes, 4] or [batch_size, num_boxes, 1, 4] or [batch_size, num_boxes, num_classes, 4]
-        ASSERT(in[0].desc.dims.nbDims == 3 || in[0].desc.dims.nbDims == 4);
+        PLUGIN_ASSERT(in[0].desc.dims.nbDims == 3 || in[0].desc.dims.nbDims == 4);
         if (in[0].desc.dims.nbDims == 3)
         {
-            ASSERT(in[0].desc.dims.d[2] == 4);
+            PLUGIN_ASSERT(in[0].desc.dims.d[2] == 4);
             mParam.shareLocation = true;
             mParam.numBoxElements = in[0].desc.dims.d[1] * in[0].desc.dims.d[2];
         }
         else
         {
             mParam.shareLocation = (in[0].desc.dims.d[2] == 1);
-            ASSERT(in[0].desc.dims.d[2] == mParam.numClasses || mParam.shareLocation);
-            ASSERT(in[0].desc.dims.d[3] == 4);
+            PLUGIN_ASSERT(in[0].desc.dims.d[2] == mParam.numClasses || mParam.shareLocation);
+            PLUGIN_ASSERT(in[0].desc.dims.d[3] == 4);
             mParam.numBoxElements = in[0].desc.dims.d[1] * in[0].desc.dims.d[2] * in[0].desc.dims.d[3];
         }
         mParam.numAnchors = in[0].desc.dims.d[1];
@@ -339,7 +355,7 @@ void EfficientNMSPlugin::configurePlugin(
             // All three inputs are used, enable the box decoder
             // Shape of anchors input should be
             // Constant shape: [1, numAnchors, 4] or [batch_size, numAnchors, 4]
-            ASSERT(in[2].desc.dims.nbDims == 3);
+            PLUGIN_ASSERT(in[2].desc.dims.nbDims == 3);
             mParam.boxDecoder = true;
             mParam.shareAnchors = (in[2].desc.dims.d[0] == 1);
         }
@@ -436,38 +452,53 @@ IPluginV2DynamicExt* EfficientNMSPluginCreator::createPlugin(const char* name, c
 {
     try
     {
-        const PluginField* fields = fc->fields;
-        for (int i = 0; i < fc->nbFields; ++i)
+        PLUGIN_VALIDATE(fc != nullptr);
+        PluginField const* fields = fc->fields;
+        PLUGIN_VALIDATE(fields != nullptr);
+        plugin::validateRequiredAttributesExist({"score_threshold", "iou_threshold", "max_output_boxes",
+                                                    "background_class", "score_activation", "box_coding"},
+            fc);
+        for (int32_t i{0}; i < fc->nbFields; ++i)
         {
-            const char* attrName = fields[i].name;
+            char const* attrName = fields[i].name;
             if (!strcmp(attrName, "score_threshold"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-                mParam.scoreThreshold = *(static_cast<const float*>(fields[i].data));
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                auto const scoreThreshold = *(static_cast<float const*>(fields[i].data));
+                PLUGIN_VALIDATE(scoreThreshold >= 0.0F);
+                mParam.scoreThreshold = scoreThreshold;
             }
             if (!strcmp(attrName, "iou_threshold"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-                mParam.iouThreshold = *(static_cast<const float*>(fields[i].data));
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                auto const iouThreshold = *(static_cast<float const*>(fields[i].data));
+                PLUGIN_VALIDATE(iouThreshold > 0.0F);
+                mParam.iouThreshold = iouThreshold;
             }
             if (!strcmp(attrName, "max_output_boxes"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
-                mParam.numOutputBoxes = *(static_cast<const int*>(fields[i].data));
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                auto const numOutputBoxes = *(static_cast<int32_t const*>(fields[i].data));
+                PLUGIN_VALIDATE(numOutputBoxes > 0);
+                mParam.numOutputBoxes = numOutputBoxes;
             }
             if (!strcmp(attrName, "background_class"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
-                mParam.backgroundClass = *(static_cast<const int*>(fields[i].data));
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                mParam.backgroundClass = *(static_cast<int32_t const*>(fields[i].data));
             }
             if (!strcmp(attrName, "score_activation"))
             {
-                mParam.scoreSigmoid = *(static_cast<const bool*>(fields[i].data));
+                auto const scoreSigmoid = *(static_cast<int32_t const*>(fields[i].data));
+                PLUGIN_VALIDATE(scoreSigmoid == 0 || scoreSigmoid == 1);
+                mParam.scoreSigmoid = static_cast<bool>(scoreSigmoid);
             }
             if (!strcmp(attrName, "box_coding"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
-                mParam.boxCoding = *(static_cast<const int*>(fields[i].data));
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                auto const boxCoding = *(static_cast<int32_t const*>(fields[i].data));
+                PLUGIN_VALIDATE(boxCoding == 0 || boxCoding == 1);
+                mParam.boxCoding = boxCoding;
             }
         }
 
@@ -475,7 +506,7 @@ IPluginV2DynamicExt* EfficientNMSPluginCreator::createPlugin(const char* name, c
         plugin->setPluginNamespace(mNamespace.c_str());
         return plugin;
     }
-    catch (const std::exception& e)
+    catch (std::exception const& e)
     {
         caughtError(e);
     }
@@ -541,22 +572,22 @@ IPluginV2DynamicExt* EfficientNMSONNXPluginCreator::createPlugin(
             const char* attrName = fields[i].name;
             if (!strcmp(attrName, "score_threshold"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
                 mParam.scoreThreshold = *(static_cast<const float*>(fields[i].data));
             }
             if (!strcmp(attrName, "iou_threshold"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
                 mParam.iouThreshold = *(static_cast<const float*>(fields[i].data));
             }
             if (!strcmp(attrName, "max_output_boxes_per_class"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
                 mParam.numOutputBoxesPerClass = *(static_cast<const int*>(fields[i].data));
             }
             if (!strcmp(attrName, "center_point_box"))
             {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
                 mParam.boxCoding = *(static_cast<const int*>(fields[i].data));
             }
         }
@@ -577,108 +608,6 @@ IPluginV2DynamicExt* EfficientNMSONNXPluginCreator::createPlugin(
 }
 
 IPluginV2DynamicExt* EfficientNMSONNXPluginCreator::deserializePlugin(
-    const char* name, const void* serialData, size_t serialLength) noexcept
-{
-    try
-    {
-        // This object will be deleted when the network is destroyed, which will
-        // call EfficientNMSPlugin::destroy()
-        auto* plugin = new EfficientNMSPlugin(serialData, serialLength);
-        plugin->setPluginNamespace(mNamespace.c_str());
-        return plugin;
-    }
-    catch (const std::exception& e)
-    {
-        caughtError(e);
-    }
-    return nullptr;
-}
-
-
-// TF-TRT CombinedNMS Op Compatibility
-
-EfficientNMSTFTRTPluginCreator::EfficientNMSTFTRTPluginCreator()
-    : mParam{}
-{
-    mPluginAttributes.clear();
-    mPluginAttributes.emplace_back(PluginField("max_output_size_per_class", nullptr, PluginFieldType::kINT32, 1));
-    mPluginAttributes.emplace_back(PluginField("max_total_size", nullptr, PluginFieldType::kINT32, 1));
-    mPluginAttributes.emplace_back(PluginField("iou_threshold", nullptr, PluginFieldType::kFLOAT32, 1));
-    mPluginAttributes.emplace_back(PluginField("score_threshold", nullptr, PluginFieldType::kFLOAT32, 1));
-    mPluginAttributes.emplace_back(PluginField("pad_per_class", nullptr, PluginFieldType::kINT32, 1));
-    mPluginAttributes.emplace_back(PluginField("clip_boxes", nullptr, PluginFieldType::kINT32, 1));
-    mFC.nbFields = mPluginAttributes.size();
-    mFC.fields = mPluginAttributes.data();
-}
-
-const char* EfficientNMSTFTRTPluginCreator::getPluginName() const noexcept
-{
-    return EFFICIENT_NMS_TFTRT_PLUGIN_NAME;
-}
-
-const char* EfficientNMSTFTRTPluginCreator::getPluginVersion() const noexcept
-{
-    return EFFICIENT_NMS_TFTRT_PLUGIN_VERSION;
-}
-
-const PluginFieldCollection* EfficientNMSTFTRTPluginCreator::getFieldNames() noexcept
-{
-    return &mFC;
-}
-
-IPluginV2DynamicExt* EfficientNMSTFTRTPluginCreator::createPlugin(
-    const char* name, const PluginFieldCollection* fc) noexcept
-{
-    try
-    {
-        const PluginField* fields = fc->fields;
-        for (int i = 0; i < fc->nbFields; ++i)
-        {
-            const char* attrName = fields[i].name;
-            if (!strcmp(attrName, "max_output_size_per_class"))
-            {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
-                mParam.numOutputBoxesPerClass = *(static_cast<const int*>(fields[i].data));
-            }
-            if (!strcmp(attrName, "max_total_size"))
-            {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
-                mParam.numOutputBoxes = *(static_cast<const int*>(fields[i].data));
-            }
-            if (!strcmp(attrName, "iou_threshold"))
-            {
-                ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-                mParam.iouThreshold = *(static_cast<const float*>(fields[i].data));
-            }
-            if (!strcmp(attrName, "score_threshold"))
-            {
-                ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-                mParam.scoreThreshold = *(static_cast<const float*>(fields[i].data));
-            }
-            if (!strcmp(attrName, "pad_per_class"))
-            {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
-                mParam.padOutputBoxesPerClass = *(static_cast<const int*>(fields[i].data));
-            }
-            if (!strcmp(attrName, "clip_boxes"))
-            {
-                ASSERT(fields[i].type == PluginFieldType::kINT32);
-                mParam.clipBoxes = *(static_cast<const int*>(fields[i].data));
-            }
-        }
-
-        auto* plugin = new EfficientNMSPlugin(mParam);
-        plugin->setPluginNamespace(mNamespace.c_str());
-        return plugin;
-    }
-    catch (const std::exception& e)
-    {
-        caughtError(e);
-    }
-    return nullptr;
-}
-
-IPluginV2DynamicExt* EfficientNMSTFTRTPluginCreator::deserializePlugin(
     const char* name, const void* serialData, size_t serialLength) noexcept
 {
     try

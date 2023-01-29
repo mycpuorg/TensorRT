@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -108,7 +109,7 @@ private:
 //! \details This function creates the MNIST network by parsing the Uff model
 //!          and builds the engine that will be used to run MNIST (mEngine)
 //!
-//! \return Returns true if the engine was created successfully and false otherwise
+//! \return true if the engine was created successfully and false otherwise
 //!
 bool SampleUffMNIST::build()
 {
@@ -134,7 +135,6 @@ bool SampleUffMNIST::build()
     }
     constructNetwork(parser, network);
     builder->setMaxBatchSize(mParams.batchSize);
-    config->setMaxWorkspaceSize(16_MiB);
     config->setFlag(BuilderFlag::kGPU_FALLBACK);
     if (mParams.fp16)
     {
@@ -349,12 +349,12 @@ bool SampleUffMNIST::teardown()
 samplesCommon::UffSampleParams initializeSampleParams(const samplesCommon::Args& args)
 {
     samplesCommon::UffSampleParams params;
-    if (args.dataDirs.empty()) //!< Use default directories if user hasn't provided paths
+    if (args.dataDirs.empty()) // Use default directories if user hasn't provided paths
     {
         params.dataDirs.push_back("data/mnist/");
         params.dataDirs.push_back("data/samples/mnist/");
     }
-    else //!< Use the data directory provided by the user
+    else // Use the data directory provided by the user
     {
         params.dataDirs = args.dataDirs;
     }

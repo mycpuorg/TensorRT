@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,6 +24,7 @@
 #include <vector>
 
 using namespace nvinfer1;
+using namespace nvinfer1::plugin;
 using nvinfer1::plugin::PriorBox;
 using nvinfer1::plugin::PriorBoxPluginCreator;
 
@@ -42,7 +44,8 @@ PriorBox::PriorBox(PriorBoxParameters param, int32_t H, int32_t W)
     , mW(W)
 {
     // each obj should manage its copy of param
-    auto copyParamData = [](float*& dest, const float* src, const size_t size) {
+    auto copyParamData = [](float*& dest, const float* src, const size_t size)
+    {
         if (size > 0)
         {
             dest = new float[size];
@@ -50,7 +53,7 @@ PriorBox::PriorBox(PriorBoxParameters param, int32_t H, int32_t W)
         }
         else
         {
-            ASSERT(dest == nullptr);
+            PLUGIN_VALIDATE(dest == nullptr);
         }
     };
     copyParamData(mParam.minSize, param.minSize, param.numMinSize);
@@ -64,20 +67,20 @@ void PriorBox::setupDeviceMemory() noexcept
 {
     auto copyToDevice = [](const void* hostData, size_t count) -> Weights {
         void* deviceData = nullptr;
-        CUASSERT(cudaMalloc(&deviceData, count * sizeof(float)));
-        CUASSERT(cudaMemcpy(deviceData, hostData, count * sizeof(float), cudaMemcpyHostToDevice));
+        PLUGIN_CUASSERT(cudaMalloc(&deviceData, count * sizeof(float)));
+        PLUGIN_CUASSERT(cudaMemcpy(deviceData, hostData, count * sizeof(float), cudaMemcpyHostToDevice));
         return Weights{DataType::kFLOAT, deviceData, int64_t(count)};
     };
 
-    // minSize is required and needs to be non-negative
-    ASSERT(mParam.numMinSize > 0 && mParam.minSize != nullptr);
+    // minSize is required and needs to be positive.
+    PLUGIN_ASSERT(mParam.numMinSize > 0 && mParam.minSize != nullptr);
     for (auto i = 0; i < mParam.numMinSize; ++i)
     {
-        ASSERT(mParam.minSize[i] > 0 && "minSize must be positive");
+        PLUGIN_ASSERT(mParam.minSize[i] > 0 && "minSize must be positive");
     }
     minSize = copyToDevice(mParam.minSize, mParam.numMinSize);
 
-    ASSERT(mParam.numAspectRatios >= 0 && mParam.aspectRatios != nullptr);
+    PLUGIN_ASSERT(mParam.numAspectRatios >= 0 && mParam.aspectRatios != nullptr);
     // Aspect ratio of 1.0 is built in.
     std::vector<float> tmpAR(1, 1);
     for (auto i = 0; i < mParam.numAspectRatios; ++i)
@@ -121,11 +124,12 @@ void PriorBox::setupDeviceMemory() noexcept
      */
     if (mParam.numMaxSize > 0)
     {
-        ASSERT(mParam.numMinSize == mParam.numMaxSize && mParam.maxSize != nullptr);
+        PLUGIN_ASSERT(mParam.numMinSize == mParam.numMaxSize && mParam.maxSize != nullptr && mParam.minSize != nullptr);
         for (auto i = 0; i < mParam.numMaxSize; ++i)
         {
             // maxSize should be greater than minSize
-            ASSERT(mParam.maxSize[i] > mParam.minSize[i] && "maxSize must be greater than minSize");
+            // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
+            PLUGIN_ASSERT(mParam.maxSize[i] > mParam.minSize[i] && "maxSize must be greater than minSize");
             mNumPriors++;
         }
         maxSize = copyToDevice(mParam.maxSize, mParam.numMaxSize);
@@ -137,7 +141,8 @@ PriorBox::PriorBox(const void* data, size_t length)
     const char *d = static_cast<const char*>(data), *a = d;
     mParam = read<PriorBoxParameters>(d);
 
-    auto readArray = [&d](const int32_t size, float*& array) {
+    auto readArray = [&d](const int32_t size, float*& array)
+    {
         if (size > 0)
         {
             array = new float[size];
@@ -158,7 +163,7 @@ PriorBox::PriorBox(const void* data, size_t length)
     mH = read<int>(d);
     mW = read<int>(d);
 
-    ASSERT(d == a + length);
+    PLUGIN_VALIDATE(d == a + length);
 
     setupDeviceMemory();
 }
@@ -173,9 +178,9 @@ int32_t PriorBox::getNbOutputs() const noexcept
 // Computes and returns the output dimensions
 Dims PriorBox::getOutputDimensions(int32_t index, const Dims* inputs, int32_t nbInputDims) noexcept
 {
-    ASSERT(nbInputDims == 2);
+    PLUGIN_ASSERT(nbInputDims == 2);
     // Only one output from the plugin layer
-    ASSERT(index == 0);
+    PLUGIN_ASSERT(index == 0);
     // Particularity of the PriorBox layer: no batchSize dimension needed
     mH = inputs[0].d[1], mW = inputs[0].d[2];
     // workaround for TRT
@@ -230,7 +235,7 @@ void PriorBox::serialize(void* buffer) const noexcept
     write(d, mH);
     write(d, mW);
 
-    ASSERT(d == a + getSerializationSize());
+    PLUGIN_ASSERT(d == a + getSerializationSize());
 }
 
 bool PriorBox::supportsFormat(DataType type, PluginFormat format) const noexcept
@@ -250,14 +255,14 @@ const char* PriorBox::getPluginVersion() const noexcept
 
 void PriorBox::destroy() noexcept
 {
-    CUASSERT(cudaFree(const_cast<void*>(minSize.values)));
+    PLUGIN_CUASSERT(cudaFree(const_cast<void*>(minSize.values)));
     if (mParam.numMaxSize > 0)
     {
-        CUASSERT(cudaFree(const_cast<void*>(maxSize.values)));
+        PLUGIN_CUASSERT(cudaFree(const_cast<void*>(maxSize.values)));
     }
     if (mParam.numAspectRatios > 0)
     {
-        CUASSERT(cudaFree(const_cast<void*>(aspectRatios.values)));
+        PLUGIN_CUASSERT(cudaFree(const_cast<void*>(aspectRatios.values)));
     }
     delete[] mParam.minSize;
     delete[] mParam.maxSize;
@@ -268,9 +273,17 @@ void PriorBox::destroy() noexcept
 
 IPluginV2Ext* PriorBox::clone() const noexcept
 {
-    PriorBox* obj = new PriorBox(mParam, mH, mW);
-    obj->setPluginNamespace(mPluginNamespace.c_str());
-    return obj;
+    try
+    {
+        PriorBox* obj = new PriorBox(mParam, mH, mW);
+        obj->setPluginNamespace(mPluginNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 // Set plugin namespace
@@ -285,10 +298,11 @@ const char* PriorBox::getPluginNamespace() const noexcept
 }
 
 // Return the DataType of the plugin output at the requested index.
-DataType PriorBox::getOutputDataType(int32_t index, const nvinfer1::DataType* /*inputTypes*/, int32_t /*nbInputs*/) const noexcept
+DataType PriorBox::getOutputDataType(
+    int32_t index, const nvinfer1::DataType* /*inputTypes*/, int32_t /*nbInputs*/) const noexcept
 {
     // Two outputs
-    ASSERT(index == 0 || index == 1);
+    PLUGIN_ASSERT(index == 0 || index == 1);
     return DataType::kFLOAT;
 }
 
@@ -309,12 +323,12 @@ void PriorBox::configurePlugin(const Dims* inputDims, int32_t nbInputs, const Di
     const DataType* inputTypes, const DataType* /*outputTypes*/, const bool* /*inputIsBroadcast*/,
     const bool* /*outputIsBroadcast*/, PluginFormat floatFormat, int32_t /*maxBatchSize*/) noexcept
 {
-    ASSERT(*inputTypes == DataType::kFLOAT && floatFormat == PluginFormat::kLINEAR);
-    ASSERT(nbInputs == 2);
-    ASSERT(nbOutputs == 1);
-    ASSERT(inputDims[0].nbDims == 3);
-    ASSERT(inputDims[1].nbDims == 3);
-    ASSERT(outputDims[0].nbDims == 3);
+    PLUGIN_ASSERT(*inputTypes == DataType::kFLOAT && floatFormat == PluginFormat::kLINEAR);
+    PLUGIN_ASSERT(nbInputs == 2);
+    PLUGIN_ASSERT(nbOutputs == 1);
+    PLUGIN_ASSERT(inputDims[0].nbDims == 3);
+    PLUGIN_ASSERT(inputDims[1].nbDims == 3);
+    PLUGIN_ASSERT(outputDims[0].nbDims == 3);
     mH = inputDims[0].d[1];
     mW = inputDims[0].d[2];
     // prepare for the inference function
@@ -377,136 +391,152 @@ const PluginFieldCollection* PriorBoxPluginCreator::getFieldNames() noexcept
 
 IPluginV2Ext* PriorBoxPluginCreator::createPlugin(const char* /*name*/, const PluginFieldCollection* fc) noexcept
 {
-    const PluginField* fields = fc->fields;
-
-    PriorBoxParameters params;
-    std::unique_ptr<float[]> minSize;
-    std::unique_ptr<float[]> maxSize;
-    std::unique_ptr<float[]> aspectRatios;
-    for (auto i = 0; i < fc->nbFields; ++i)
+    try
     {
-        const char* attrName = fields[i].name;
-        if (!strcmp(attrName, "minSize"))
+        const PluginField* fields = fc->fields;
+
+        PriorBoxParameters params;
+        std::unique_ptr<float[]> minSize;
+        std::unique_ptr<float[]> maxSize;
+        std::unique_ptr<float[]> aspectRatios;
+        for (auto i = 0; i < fc->nbFields; ++i)
         {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            const int32_t size = fields[i].length;
-            params.numMinSize = size;
-            if (size > 0)
+            const char* attrName = fields[i].name;
+            if (!strcmp(attrName, "minSize"))
             {
-                minSize.reset(new float[size]);
-                params.minSize = minSize.get();
-                const auto* minS = static_cast<const float*>(fields[i].data);
-                for (auto j = 0; j < size; j++)
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                const int32_t size = fields[i].length;
+                params.numMinSize = size;
+                if (size > 0)
                 {
-                    params.minSize[j] = *minS;
-                    minS++;
+                    minSize.reset(new float[size]);
+                    params.minSize = minSize.get();
+                    const auto* minS = static_cast<const float*>(fields[i].data);
+                    for (auto j = 0; j < size; j++)
+                    {
+                        params.minSize[j] = *minS;
+                        minS++;
+                    }
+                }
+                else
+                {
+                    params.minSize = nullptr;
                 }
             }
-            else
+            else if (!strcmp(attrName, "maxSize"))
             {
-                params.minSize = nullptr;
-            }
-        }
-        else if (!strcmp(attrName, "maxSize"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            const int32_t size = fields[i].length;
-            params.numMaxSize = size;
-            if (size > 0)
-            {
-                maxSize.reset(new float[size]);
-                params.maxSize = maxSize.get();
-                const auto* maxS = static_cast<const float*>(fields[i].data);
-                for (auto j = 0; j < size; j++)
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                const int32_t size = fields[i].length;
+                params.numMaxSize = size;
+                if (size > 0)
                 {
-                    params.maxSize[j] = *maxS;
-                    maxS++;
+                    maxSize.reset(new float[size]);
+                    params.maxSize = maxSize.get();
+                    const auto* maxS = static_cast<const float*>(fields[i].data);
+                    for (auto j = 0; j < size; j++)
+                    {
+                        params.maxSize[j] = *maxS;
+                        maxS++;
+                    }
+                }
+                else
+                {
+                    params.maxSize = nullptr;
                 }
             }
-            else
+            else if (!strcmp(attrName, "aspectRatios"))
             {
-                params.maxSize = nullptr;
-            }
-        }
-        else if (!strcmp(attrName, "aspectRatios"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            const int32_t size = fields[i].length;
-            params.numAspectRatios = size;
-            if (size > 0)
-            {
-                aspectRatios.reset(new float[size]);
-                params.aspectRatios = aspectRatios.get();
-                const auto* aR = static_cast<const float*>(fields[i].data);
-                for (auto j = 0; j < size; j++)
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                const int32_t size = fields[i].length;
+                params.numAspectRatios = size;
+                if (size > 0)
                 {
-                    params.aspectRatios[j] = *aR;
-                    aR++;
+                    aspectRatios.reset(new float[size]);
+                    params.aspectRatios = aspectRatios.get();
+                    const auto* aR = static_cast<const float*>(fields[i].data);
+                    for (auto j = 0; j < size; j++)
+                    {
+                        params.aspectRatios[j] = *aR;
+                        aR++;
+                    }
+                }
+                else
+                {
+                    params.aspectRatios = nullptr;
                 }
             }
-            else
+            else if (!strcmp(attrName, "variance"))
             {
-                params.aspectRatios = nullptr;
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                const int32_t size = fields[i].length;
+                const auto* lVar = static_cast<const float*>(fields[i].data);
+                for (auto j = 0; j < size; j++)
+                {
+                    params.variance[j] = (*lVar);
+                    lVar++;
+                }
+            }
+            else if (!strcmp(attrName, "flip"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.flip = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "clip"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.clip = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "imgH"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.imgH = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "imgW"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kINT32);
+                params.imgW = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "stepH"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                params.stepH = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "stepW"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                params.stepW = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
+            }
+            else if (!strcmp(attrName, "offset"))
+            {
+                PLUGIN_VALIDATE(fields[i].type == PluginFieldType::kFLOAT32);
+                params.offset = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
             }
         }
-        else if (!strcmp(attrName, "variance"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            const int32_t size = fields[i].length;
-            const auto* lVar = static_cast<const float*>(fields[i].data);
-            for (auto j = 0; j < size; j++)
-            {
-                params.variance[j] = (*lVar);
-                lVar++;
-            }
-        }
-        else if (!strcmp(attrName, "flip"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.flip = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "clip"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.clip = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "imgH"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.imgH = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "imgW"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kINT32);
-            params.imgW = static_cast<int>(*(static_cast<const int*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "stepH"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            params.stepH = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "stepW"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            params.stepW = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
-        }
-        else if (!strcmp(attrName, "offset"))
-        {
-            ASSERT(fields[i].type == PluginFieldType::kFLOAT32);
-            params.offset = static_cast<float>(*(static_cast<const float*>(fields[i].data)));
-        }
+        PriorBox* obj = new PriorBox(params);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
     }
-    PriorBox* obj = new PriorBox(params);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }
 
 IPluginV2Ext* PriorBoxPluginCreator::deserializePlugin(
     const char* /*name*/, const void* serialData, size_t serialLength) noexcept
 {
-    // This object will be deleted when the network is destroyed, which will
-    // call PriorBox::destroy()
-    PriorBox* obj = new PriorBox(serialData, serialLength);
-    obj->setPluginNamespace(mNamespace.c_str());
-    return obj;
+    try
+    {
+        // This object will be deleted when the network is destroyed, which will
+        // call PriorBox::destroy()
+        PriorBox* obj = new PriorBox(serialData, serialLength);
+        obj->setPluginNamespace(mNamespace.c_str());
+        return obj;
+    }
+    catch (std::exception const& e)
+    {
+        caughtError(e);
+    }
+    return nullptr;
 }

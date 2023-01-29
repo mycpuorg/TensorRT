@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,24 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "common/kernel.h"
 #include <array>
-#include "kernel.h"
+
+using namespace nvinfer1;
 
 template <typename Dtype, unsigned nthds_per_cta>
-__launch_bounds__(nthds_per_cta)
-    __global__ void permuteData_kernel(
-        const int nthreads,
-        const int num_classes,
-        const int num_data,
-        const int num_dim,
-        bool confSigmoid,
-        const Dtype* data,
-        Dtype* new_data)
+__launch_bounds__(nthds_per_cta) __global__ void permuteData_kernel(const int nthreads, const int num_classes,
+    const int num_data, const int num_dim, bool confSigmoid, const Dtype* data, Dtype* new_data)
 {
     // data format: [batch_size, num_data, num_classes, num_dim]
-    for (int index = blockIdx.x * nthds_per_cta + threadIdx.x;
-         index < nthreads;
-         index += nthds_per_cta * gridDim.x)
+    for (int index = blockIdx.x * nthds_per_cta + threadIdx.x; index < nthreads; index += nthds_per_cta * gridDim.x)
     {
         const int i = index % num_dim;
         const int c = (index / num_dim) % num_classes;
@@ -75,6 +69,7 @@ struct pdLaunchConfig
 
     pdLaunchConfig(DataType t_data)
         : t_data(t_data)
+        , function(nullptr)
     {
     }
     pdLaunchConfig(DataType t_data, pdFunc function)
